@@ -1,5 +1,7 @@
 # Project Brief
 
+Working name: **Trust Issues** — provisional.
+
 ## Product thesis
 
 Current autonomous agents can call tools successfully while still failing to complete the actual real-world job correctly.
@@ -49,6 +51,10 @@ boss gives vague ad-hoc request
 - **Vendor D — Instagram:** controlled Drop & Reset Instagram counterparty through Unipile.
 
 The people may be simulated by the builder. The app integrations must be real.
+
+Instagram is part of the intended main path, not a stretch goal (see `DECISIONS_LOG.md` D007 for the narrow cut rule).
+
+The final judged path must use at least three genuine external apps meaningfully; apps are included because the work spans them, not for app count.
 
 ## Other app roles
 

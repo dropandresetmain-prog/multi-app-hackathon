@@ -20,7 +20,7 @@ Never commit secrets, tokens, refresh tokens, client secrets, API keys, private 
 | OpenAI API | **FALLBACK READY** | use only if free OpenRouter route is insufficiently reliable |
 | Exa | **READY** | API key ready as controlled web-search/evidence fallback |
 | Web catalogue | **BUILD-TIME PROOF PENDING** | choose exact real vendor/product page; retain source URL and public evidence |
-| Convex | **SETUP REQUIRED IN THIS REPO** | create/link project; explicitly identify Development / Preview / Production deployments; prove writes only against named target |
+| Convex | **DEVELOPMENT PASS** | project `multi-app-hackathon`; Development `acrobatic-swan-765` schema push + bounded write + independent read-back + cleanup proven (2026-09-14); Preview / Production NOT CREATED — see `docs/ENVIRONMENTS.md` |
 | Vercel | **AVAILABLE** | deploy once app exists; prove public UI/webhook paths |
 
 ## Google runtime role
@@ -100,7 +100,7 @@ Before any write-capable Convex task, record and verify:
 
 Never allow an agent to write to an implicit or assumed deployment.
 
-The implementation should explicitly document all created deployments as soon as Convex is initialized.
+All created deployments are recorded in `docs/ENVIRONMENTS.md`; update it whenever a deployment is created.
 
 ## Model gate
 

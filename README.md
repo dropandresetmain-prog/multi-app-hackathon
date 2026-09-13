@@ -4,7 +4,7 @@ Implementation repository for the Multi-App AI Agent Hackathon.
 
 ## Working product
 
-**Trust Issues** is a reliability layer for autonomous workers that take real actions across external systems.
+**Trust Issues** (provisional working name) is a reliability layer for autonomous workers that take real actions across external systems.
 
 The hackathon demo uses one **Procurement Role Adapter** for a believable last-minute corporate-gifting task:
 
@@ -61,7 +61,7 @@ Preflighted before implementation:
 - OpenRouter — key ready; free models preferred
 - OpenAI API — fallback available
 - Exa — key ready as controlled web-search/evidence fallback
-- Convex — to be created/linked in this repo with explicit environment identifiers
+- Convex — Development deployment created and write/read-back proven; Preview and Production NOT CREATED (see `docs/ENVIRONMENTS.md`)
 - Vercel — available for deployment
 
 ## Scope discipline
@@ -85,7 +85,29 @@ From the first implementation milestone:
 LIVE_AI_ENABLED=true|false
 ```
 
-Free OpenRouter models are preferred. Direct OpenAI is the fallback if the free route is not reliable enough.
+Free OpenRouter models are preferred. Direct OpenAI is the fallback if the free route is not reliable enough. There is no `DEMO_MODE`.
+
+## Local development
+
+Stack: Next.js (App Router) + TypeScript + React + Convex; Vercel later.
+
+```bash
+npm install
+```
+
+```bash
+npm run dev
+```
+
+```bash
+npm run typecheck
+```
+
+```bash
+npm run build
+```
+
+Copy `.env.example` to `.env.local` and fill values locally. Before any Convex write or schema push, read `docs/ENVIRONMENTS.md` and pin the exact deployment — never rely on implicit CLI state.
 
 ## Documentation
 
@@ -94,6 +116,7 @@ Free OpenRouter models are preferred. Direct OpenAI is the fallback if the free 
 - `DEMO_SLICE.md` — exact demo direction and acceptance behavior
 - `DECISIONS_LOG.md` — settled decisions that should not drift
 - `INTEGRATION_PREFLIGHT.md` — integration readiness and remaining build-time proofs
+- `docs/ENVIRONMENTS.md` — Convex project/deployment identifiers and write policy
 - `docs/work/ACTIVE_TASK.md` — current checkpoint, checklist, and next action
 
 ## Provenance

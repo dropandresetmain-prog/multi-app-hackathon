@@ -6,7 +6,7 @@ Ship one reliable, presentation-ready multi-app procurement workflow for the Mul
 
 ## Current phase
 
-**Implementation start — bootstrap + Reliability Core + Mission Control UI**
+**Foundation complete → next: Astra Reliability Core + Mission Control UI**
 
 ## Current checkpoint
 
@@ -41,24 +41,35 @@ One vague sponsor-gift request → material clarification → Calendar/Drive con
 - Instagram is intended in the main path but may be cut if it materially threatens completion.
 - STT is P1; TTS is P2.
 
-## Immediate milestone — foundation + Astra lane
+## Completed milestone — pre-Astra foundation (2026-09-14)
 
-- [ ] Inspect repo and initialize the smallest appropriate Next.js/TypeScript app.
-- [ ] Initialize/link Convex in this repository.
-- [ ] Record exact Convex Development deployment identifier.
-- [ ] Record Preview and Production deployment identifiers when they exist; explicitly state `NOT CREATED` rather than guessing before that.
-- [ ] Add deployment safety guidance to environment/config docs as needed.
-- [ ] Create `.env.example` containing names only; ensure `.env*` secrets are ignored.
-- [ ] Add non-secret `LIVE_AI_ENABLED` handling.
+Branch `chore/bootstrap-convex-foundation`.
+
+- [x] Reconciled migrated planning docs against `wip-personal` (provisional name, clean-sheet rule, ≥3 genuine apps, Instagram main path, no `DEMO_MODE`).
+- [x] Minimal Next.js + TypeScript + React + Convex scaffold (no product UI; root shell shows Convex health only).
+- [x] `.gitignore` excludes `.env` / `.env.*` (except `.env.example`); `.env.example` has names only, `LIVE_AI_ENABLED=false`.
+- [x] Convex project `dropandreset-main:multi-app-hackathon` created.
+- [x] Development deployment: **`acrobatic-swan-765`** (`dev/dropandreset-main`).
+- [x] Preview: **NOT CREATED**. Production: **NOT CREATED**.
+- [x] `docs/ENVIRONMENTS.md` + `AGENTS.md` deployment-safety invariant.
+- [x] Health surface `convex/health.ts`: public `status` query + internal, deployment-guarded probe mutations.
+- [x] Dev proof: schema push → bounded write → independent read-back (function + data browser) → mismatch refusal → cleanup (table empty).
+- [x] `npm install`, `tsc --noEmit` (root + convex), `convex codegen`, `next build`, `next dev` page rendering live Convex health — all pass.
+
+## Next milestone — Astra lane (Reliability Core + Mission Control)
+
+Convex target for this lane: **Development `acrobatic-swan-765` only**. Preview/Production stay untouched.
+
+- [ ] Add non-secret `LIVE_AI_ENABLED` runtime handling beyond the health surface.
 - [ ] Define minimum Core Worker Contract needed by the demo.
 - [ ] Define procurement workflow and vendor state machines.
-- [ ] Define minimum Convex schema for request/vendor/evidence/communication/approval/effect/event state.
+- [ ] Define minimum Convex schema for request/vendor/evidence/communication/approval/effect/event state (replace/retire `healthProbes` only if it gets in the way).
 - [ ] Implement effect/idempotency ledger sufficient for critical side effects.
 - [ ] Implement approval enforcement.
 - [ ] Implement evidence versioning/reconciliation sufficient for later vendor claims to supersede stale claims.
 - [ ] Implement verification semantics so unverified effects cannot become complete.
 - [ ] Build Mission Control UI from persisted Convex state.
-- [ ] Add focused tests for core invariants.
+- [ ] Add focused tests for core invariants (choose a light test runner; none exists yet).
 - [ ] Prove local build/typecheck/tests.
 - [ ] Commit/push one meaningful checkpoint.
 
@@ -99,7 +110,7 @@ Do not call the core milestone complete because code exists.
 
 PASS requires:
 
-1. named Convex deployment verified;
+1. named Convex deployment verified (Development `acrobatic-swan-765`);
 2. schema/runtime/UI compile;
 3. focused reliability tests pass;
 4. Mission Control renders persisted state;
@@ -110,4 +121,4 @@ PASS requires:
 
 ## Current next action
 
-Run the Astra implementation lane against this repository while product/storyline work freezes the exact vendor fixture in parallel.
+Start the Astra Reliability Core + Mission Control lane on Development `acrobatic-swan-765`, while product/storyline work freezes the exact vendor fixture in parallel.

@@ -172,3 +172,26 @@ Speech must not be allowed to destabilize the core workflow.
 **Decision:** Earlier planning occurred in private `wip-personal/multi-app-hackathon/` before implementation start.
 
 This repository is the implementation-era source of truth from 14 September 2026 Singapore time onward. Do not copy stale planning assumptions back into the build.
+
+---
+
+## D021 — Working name is provisional
+
+**Decision:** Use **Trust Issues** as the working project name. It is not final; naming must not consume build time.
+
+---
+
+## D022 — Clean-sheet implementation
+
+**Decision:** Army of Interns and the existing EA are idea sources only.
+
+**Allowed:** concepts, lessons, failure modes. **Not allowed:** copied code, files, schemas, or taxonomy.
+
+---
+
+## D023 — Foundation stack
+
+**Decision:** Next.js (App Router) + TypeScript + React + Convex, deployed to Vercel later. No UI framework added at bootstrap.
+
+**Convex:** team `dropandreset-main`, project `multi-app-hackathon`. Development deployment `acrobatic-swan-765` is the only environment allowed for normal coding. Preview and Production are NOT CREATED and write-protected by convention. Identifiers and pinning rules live in `docs/ENVIRONMENTS.md`.
+

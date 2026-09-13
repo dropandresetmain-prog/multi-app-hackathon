@@ -12,7 +12,8 @@ Use these as the current source of truth:
 4. `DEMO_SLICE.md`
 5. `DECISIONS_LOG.md`
 6. `INTEGRATION_PREFLIGHT.md`
-7. `docs/work/ACTIVE_TASK.md`
+7. `docs/ENVIRONMENTS.md`
+8. `docs/work/ACTIVE_TASK.md`
 
 Do not rely on older pre-hackathon chat context when these files disagree.
 
@@ -30,9 +31,17 @@ Do not rely on older pre-hackathon chat context when these files disagree.
 - Repeated execution must not duplicate RFQs, approvals, confirmations, rejections, or accounting records.
 - Tool/API success is not enough to mark work complete; verify resulting external state.
 - Keep `LIVE_AI_ENABLED=true|false` from the first runtime milestone.
+- No `DEMO_MODE` flag.
 - Prefer free OpenRouter models; OpenAI is fallback if reliability is inadequate.
+- Army of Interns and the existing EA are idea sources only; do not copy their code, files, schemas, or taxonomy.
 
 ## Convex deployment safety
+
+**Coding agents must name the exact Convex environment and deployment before any write, seed, migration/schema mutation, reset, or destructive action.** Current identifiers and pinning commands live in `docs/ENVIRONMENTS.md`.
+
+- Development: `acrobatic-swan-765` (project `dropandreset-main:multi-app-hackathon`) — the only environment allowed for normal coding.
+- Preview: NOT CREATED. Production: NOT CREATED. Both are write-protected by convention.
+- The same Convex team also holds the unrelated `army-of-interns` project; never target it from this repo.
 
 Never use an implicit or assumed Convex deployment.
 
