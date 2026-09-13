@@ -4,7 +4,7 @@
 
 Somebody is an autonomous AI coworker for the messy operational jobs that fall between roles: gather context, chase people, reconcile changing information, ask for authority when it matters, take the approved action, and verify that the job actually got done.
 
-**Demo video:** https://youtu.be/hMjTcs8iwvc
+**Demo video:** https://youtu.be/ciKirevDVpI
 
 ---
 
