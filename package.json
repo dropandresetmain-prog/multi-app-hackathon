@@ -14,6 +14,8 @@
     "dev:smoke": "tsx scripts/smoke-development.ts",
     "dev:smoke:live": "tsx scripts/smoke-development.ts --live",
     "dev:fixture": "tsx scripts/smoke-development.ts --showcase",
+    "qbo:oauth": "tsx scripts/qbo-oauth-bootstrap.ts",
+    "qbo:prove": "tsx scripts/prove-quickbooks-po.ts",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen"
   },

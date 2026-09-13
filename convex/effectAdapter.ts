@@ -1,12 +1,32 @@
 import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { fixtureEvidence } from "../lib/procurement/fixtures";
-import type { AgentCommand, Mission } from "../lib/procurement/types";
+import type { AgentCommand, Effect, Mission } from "../lib/procurement/types";
+import {
+  createOrReconcilePurchaseOrder,
+  parsePurchaseOrderIntentPayload,
+  readBackPurchaseOrder,
+  readConfig,
+} from "../lib/accounting/quickbooks";
 import { sourceCatalogueEvidence } from "../lib/web/sourceCatalogueEvidence";
 
-// Transport boundary: Development fixtures for outreach channels; public web
-// retrieval for the Web catalogue vendor. All paths still call the same
-// effect and ingest_external_evidence contracts. Not a plugin registry.
+function purchaseOrderIntent(mission: Mission, effect: Effect) {
+  const vendor = mission.vendors.find((entry) => entry.id === effect.targetId);
+  if (!vendor) throw new Error("Unknown vendor for purchase order effect");
+  const parsed = parsePurchaseOrderIntentPayload(effect.payload);
+  return {
+    ...parsed,
+    effectKey: effect.key,
+    missionKey: mission.key,
+    vendorName: vendor.name,
+    product: vendor.product,
+  };
+}
+
+// Transport boundary: Web catalogue uses public retrieval; purchase_order uses
+// QuickBooks Online Sandbox create + independent read-back; outreach channels
+// still use Development fixtures until Unipile/Google land. All paths call the
+// same effect and ingest_external_evidence contracts. Not a plugin registry.
 export async function dispatch(
   ctx: ActionCtx,
   key: string,
@@ -22,6 +42,24 @@ export async function dispatch(
     const effect = await ctx.runMutation(internal.missions.attempt, args);
     if (effect.status === "verified" || effect.status === "unverified")
       return `Effect already ${effect.status}; no duplicate delivery`;
+
+    if (effect.kind === "purchase_order") {
+      const mission = await ctx.runQuery(internal.missions.read, { key });
+      const intent = purchaseOrderIntent(mission, effect);
+      const result = await createOrReconcilePurchaseOrder(
+        readConfig(process.env),
+        intent,
+        effect.receiptId,
+      );
+      await ctx.runMutation(internal.missions.acknowledge, {
+        ...args,
+        receiptId: result.providerId,
+      });
+      return result.created
+        ? "QuickBooks Purchase Order create returned success; verification is still required"
+        : "QuickBooks Purchase Order reconciled without duplicate create; verification is still required";
+    }
+
     const receiptId = await ctx.runMutation(
       internal.missions.deliverFixture,
       args,
@@ -33,6 +71,32 @@ export async function dispatch(
     return "Development fixture delivery succeeded; verification is still required";
   }
   if (command.type === "verify_effect") {
+    const mission = await ctx.runQuery(internal.missions.read, { key });
+    const effect = mission.effects.find(
+      (entry) => entry.key === command.effectKey,
+    );
+    if (!effect) throw new Error("Unknown effect");
+
+    if (effect.kind === "purchase_order") {
+      if (!effect.receiptId)
+        throw new Error("No QuickBooks provider identity to read back");
+      const intent = purchaseOrderIntent(mission, effect);
+      await readBackPurchaseOrder(
+        readConfig(process.env),
+        effect.receiptId,
+        intent,
+      );
+      return await ctx.runMutation(internal.missions.verify, {
+        ...args,
+        observed: {
+          key: effect.key,
+          endpointRef: effect.endpointRef,
+          payload: effect.payload,
+          createdAt: Date.now(),
+        },
+      });
+    }
+
     const observed = await ctx.runQuery(internal.missions.readReceipt, {
       effectKey: command.effectKey,
     });

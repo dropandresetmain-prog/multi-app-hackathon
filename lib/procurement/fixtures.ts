@@ -8,7 +8,7 @@ import type {
   Vendor,
 } from "./types";
 
-export const DEVELOPMENT_ACCOUNTING_ENDPOINT = "dev.accounting.ledger";
+export const DEVELOPMENT_ACCOUNTING_ENDPOINT = "qbo.sandbox";
 const catalogueSource = defaultCatalogueSource();
 const DEVELOPMENT_ENDPOINTS: Record<string, string> = {
   catalogue: catalogueSource.endpointRef,

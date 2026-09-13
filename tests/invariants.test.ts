@@ -317,7 +317,7 @@ test("attempted and successful-but-unverified effects cannot complete the workfl
 test("read-back validates stable identity, endpoint and payload; missing observations fail", () => {
   const expected = {
     key: "po:1",
-    endpointRef: "dev.accounting.ledger",
+    endpointRef: "qbo.sandbox",
     payload: "25 gifts:62500",
   };
   assert.throws(() => verifyReceipt(expected, null));
