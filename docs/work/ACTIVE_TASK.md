@@ -2,14 +2,17 @@
 
 ## Current checkpoint
 
-Targeted review fixes on `feature/generalize-procurement-core`. Not merged to `main`.
+Shared-core generalization is merged to `main`. Do not start the five parallel integration lanes in this chat.
 
-- [x] Communication state is the latest outbound effect, not the highest lifecycle rank.
-- [x] Evidence provenance must match the configured vendor channel.
-
-- Base `origin/main` verified: `966f28d9836cf47b351df3a46a8790cf89dc99c3`.
-- Branch: `feature/generalize-procurement-core`.
+- Original `main`: `966f28d9836cf47b351df3a46a8790cf89dc99c3`
+- Candidate branch: `feature/generalize-procurement-core`
+- Candidate tip verified: `57dee44328bb8d24c3e9a3be88e87a3a9371356a`
+- PR: https://github.com/dropandresetmain-prog/multi-app-hackathon/pull/2
+- Merge method: merge commit (history preserved)
+- Merge commit / resulting `main`: `bad8f8b88715638ef5d27d925facecf1c5f8a8a8`
 - Convex: **Development `acrobatic-swan-765` only**. Production `proficient-panda-882` exists and is write-protected / out of scope. Preview is not created.
+
+`PARALLEL_LANE_BASE_SHA=bad8f8b88715638ef5d27d925facecf1c5f8a8a8`
 
 ## Completed product behavior
 
@@ -21,18 +24,21 @@ Targeted review fixes on `feature/generalize-procurement-core`. Not merged to `m
 - [x] `orderQuantity = max(requiredQuantity, MOQ)` without changing the user's required quantity.
 - [x] Deterministic ranking by landed cost, then stable vendor-id tie-break. Lower-ranked recommendations are rejected.
 - [x] No-viable-option is an explicit recorded result with no invented winner and no commitment effects.
-- [x] Communication truth is derived from effect lifecycle: none / pending / attempted / unverified / verified.
+- [x] Communication truth is derived from the latest matching outbound effect lifecycle.
+- [x] Evidence provenance must match the configured vendor channel.
 - [x] Existing reliability invariants still pass.
 - [x] Environment docs record Production `proficient-panda-882` as write-protected.
+- [x] Candidate merged to `main` at the SHA above.
 
 ## Evidence
 
-- [x] `npm test` — 28/28 PASS.
+Pre-merge promotion verification on Development `acrobatic-swan-765` (Production untouched, no live model call):
+
+- [x] `npm test` — 30/30 PASS.
 - [x] `npm run typecheck` / `typecheck:convex` — PASS.
 - [x] `npm run convex:codegen` — PASS against Development `acrobatic-swan-765`.
 - [x] `npm run build` — PASS.
-- [x] `npm run dev:smoke` — PASS (`proof-3577ec08-0b65-4142-af68-18ff133af300`, `live=false`, 6 evidence / 1 approval / 8 effects / complete; ranking after update: `studio`).
-- [x] Live-model call not run for this refactor. Deployment already had `LIVE_AI_ENABLED=true`; secrets were not modified.
+- [x] `npm run dev:smoke` — PASS (`proof-fcc6e76c-ace8-40ad-ae51-05bb23ff6bbd`, `live=false`, 6 evidence / 1 approval / 8 effects / complete; ranking `studio`).
 
 ## Limitations / review decisions
 
@@ -44,12 +50,12 @@ Targeted review fixes on `feature/generalize-procurement-core`. Not merged to `m
 
 ## Exact next parallelizable lanes
 
-Use **fresh chats**. Do not rewrite procurement policy.
+Not started. Use **fresh chats**, each in its own isolated worktree and branch, all starting from `PARALLEL_LANE_BASE_SHA=bad8f8b88715638ef5d27d925facecf1c5f8a8a8`. Do not rewrite procurement policy.
 
 1. **Google Workspace:** Calendar / Drive context, controlled Gmail bindings, RFQ/reply/clarification with provider message identity, Sheets projection.
-2. **Unipile:** WhatsApp / Instagram through the same effect/evidence contracts.
-3. **Web:** real catalogue evidence / Exa if useful.
-4. **QuickBooks:** approved PO create + independent read-back.
-5. **Product UI:** chat-style delegation + later voice input.
+2. **Unipile WhatsApp + Instagram:** same effect/evidence contracts.
+3. **QuickBooks:** approved PO create + independent read-back.
+4. **Web catalogue / search:** real catalogue evidence / Exa if useful.
+5. **Somebody chat + voice:** chat-style delegation + later voice input.
 
-Start from `lib/procurement/domain.ts`, `convex/effectAdapter.ts`, and `ingest_external_evidence`. Exclude payments, auth product work, extra agents, and merging this branch to `main` until review.
+Exclude payments, auth product work, extra agents, and any new shared-core policy changes.
