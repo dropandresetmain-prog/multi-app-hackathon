@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>Somebody — Demo Video Scenes</title>
+  <style>
+    :root {
+      --paper: #f3efe7;
+      --ink: #171716;
+      --muted: #6f6a63;
+      --accent: #7c6c5f;
+      --line: rgba(23, 23, 22, 0.12);
+      --shadow: 0 30px 70px rgba(27, 24, 20, 0.12);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #121211;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #121211;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    .stage {
+      position: relative;
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      isolation: isolate;
+      background: var(--paper);
+    }
+
+    .stage::after {
+      content: "";
+      position: absolute;
+      inset: 36px;
+      border: 1px solid transparent;
+      pointer-events: none;
+    }
+
+    .scene {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .stage[data-scene="opening"] .scene-opening,
+    .stage[data-scene="working"] .scene-working,
+    .stage[data-scene="closing"] .scene-closing {
+      display: flex;
+    }
+
+    .opening-copy {
+      position: absolute;
+      left: 7.4%;
+      top: 50%;
+      width: 54%;
+      transform: translateY(-50%);
+      z-index: 3;
+    }
+
+    .opening-copy > * {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 100%;
+      margin: 0;
+      opacity: 0;
+      transform: translateY(calc(-50% + 12px));
+    }
+
+    .intro {
+      max-width: 980px;
+      font-size: clamp(42px, 4.6vw, 88px);
+      line-height: 0.98;
+      letter-spacing: -0.055em;
+      font-weight: 720;
+    }
+
+    .intro em {
+      font-style: normal;
+      color: var(--accent);
+    }
+
+    .request {
+      max-width: 920px;
+      font-size: clamp(38px, 4vw, 76px);
+      line-height: 1.02;
+      letter-spacing: -0.045em;
+      font-weight: 650;
+    }
+
+    .request::before {
+      content: "“";
+      color: var(--accent);
+      margin-right: 0.02em;
+    }
+
+    .request::after {
+      content: "”";
+      color: var(--accent);
+    }
+
+    .you-line {
+      max-width: 900px;
+      font-size: clamp(42px, 4.4vw, 84px);
+      line-height: 0.99;
+      letter-spacing: -0.05em;
+      font-weight: 720;
+    }
+
+    .brand-reveal {
+      font-size: clamp(72px, 7.6vw, 146px);
+      line-height: 0.88;
+      letter-spacing: -0.065em;
+      font-weight: 780;
+    }
+
+    .mascot-area {
+      position: absolute;
+      right: 5.2%;
+      top: 50%;
+      width: 34%;
+      height: 74%;
+      transform: translateY(-50%);
+      z-index: 2;
+    }
+
+    .mascot-state {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+      filter: drop-shadow(var(--shadow));
+    }
+
+    .stage.is-playing[data-scene="opening"] .intro {
+      animation: text-window 1.85s ease both 0.12s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .request-1 {
+      animation: text-window 1.45s ease both 1.72s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .request-2 {
+      animation: text-window 1.45s ease both 3.03s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .request-3 {
+      animation: text-window 1.72s ease both 4.34s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .you-line {
+      animation: text-window 1.55s ease both 5.98s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .brand-reveal {
+      animation: reveal-hold 0.72s cubic-bezier(.2,.8,.2,1) both 7.42s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .mascot-intro {
+      animation: mascot-window 1.85s ease both 0s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .mascot-working {
+      animation: mascot-window 1.52s ease both 1.68s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .mascot-following {
+      animation: mascot-window 1.52s ease both 2.98s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .mascot-searching {
+      animation: mascot-window 1.78s ease both 4.28s;
+    }
+
+    .stage.is-playing[data-scene="opening"] .mascot-final {
+      animation: mascot-reveal 0.72s cubic-bezier(.2,.8,.2,1) both 6.0s;
+    }
+
+    .scene-working {
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .working-mascot {
+      width: min(38vw, 700px);
+      height: min(58vh, 620px);
+      object-fit: contain;
+      opacity: 0;
+      transform: translateY(12px) scale(0.985);
+      filter: drop-shadow(var(--shadow));
+    }
+
+    .working-label {
+      margin: -14px 0 0;
+      font-size: clamp(30px, 2.8vw, 54px);
+      letter-spacing: -0.035em;
+      font-weight: 660;
+      opacity: 0;
+      transform: translateY(8px);
+    }
+
+    .stage.is-playing[data-scene="working"] .working-mascot {
+      animation: working-beat 1.85s cubic-bezier(.2,.8,.2,1) both;
+    }
+
+    .stage.is-playing[data-scene="working"] .working-label {
+      animation: working-label 1.75s ease both 0.18s;
+    }
+
+    .scene-closing {
+      padding: 7.5%;
+      justify-content: space-between;
+      gap: 5%;
+    }
+
+    .closing-copy {
+      width: 56%;
+      z-index: 2;
+    }
+
+    .closing-name,
+    .closing-tagline,
+    .closing-rule {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+
+    .closing-name {
+      margin: 0;
+      font-size: clamp(82px, 8.4vw, 160px);
+      line-height: 0.88;
+      letter-spacing: -0.07em;
+      font-weight: 790;
+    }
+
+    .closing-rule {
+      width: 76px;
+      height: 2px;
+      margin: 34px 0 30px;
+      background: var(--ink);
+      transform-origin: left center;
+    }
+
+    .closing-tagline {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(28px, 2.65vw, 50px);
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+      font-weight: 580;
+      color: var(--muted);
+    }
+
+    .closing-mascot {
+      width: 36%;
+      height: 74%;
+      object-fit: contain;
+      opacity: 0;
+      transform: translateY(12px) scale(0.985);
+      filter: drop-shadow(var(--shadow));
+    }
+
+    .stage.is-playing[data-scene="closing"] .closing-mascot {
+      animation: reveal-hold 0.78s cubic-bezier(.2,.8,.2,1) both 0.08s;
+    }
+
+    .stage.is-playing[data-scene="closing"] .closing-name {
+      animation: reveal-hold 0.62s cubic-bezier(.2,.8,.2,1) both 0.24s;
+    }
+
+    .stage.is-playing[data-scene="closing"] .closing-rule {
+      animation: rule-reveal 0.52s cubic-bezier(.2,.8,.2,1) both 0.54s;
+    }
+
+    .stage.is-playing[data-scene="closing"] .closing-tagline {
+      animation: reveal-hold 0.68s cubic-bezier(.2,.8,.2,1) both 0.72s;
+    }
+
+    @keyframes text-window {
+      0% { opacity: 0; transform: translateY(calc(-50% + 12px)); }
+      14% { opacity: 1; transform: translateY(-50%); }
+      78% { opacity: 1; transform: translateY(-50%); }
+      100% { opacity: 0; transform: translateY(calc(-50% - 8px)); }
+    }
+
+    @keyframes mascot-window {
+      0% { opacity: 0; transform: translateY(10px) scale(0.985); }
+      15% { opacity: 1; transform: translateY(0) scale(1); }
+      80% { opacity: 1; transform: translateY(0) scale(1); }
+      100% { opacity: 0; transform: translateY(-4px) scale(1); }
+    }
+
+    @keyframes mascot-reveal {
+      0% { opacity: 0; transform: translateY(10px) scale(0.985); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes reveal-hold {
+      0% { opacity: 0; transform: translateY(12px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes rule-reveal {
+      0% { opacity: 0; transform: scaleX(0); }
+      100% { opacity: 1; transform: scaleX(1); }
+    }
+
+    @keyframes working-beat {
+      0% { opacity: 0; transform: translateY(12px) scale(0.985); }
+      16% { opacity: 1; transform: translateY(0) scale(1); }
+      68% { opacity: 1; transform: translateY(-2px) scale(1); }
+      100% { opacity: 0; transform: translateY(-6px) scale(1); }
+    }
+
+    @keyframes working-label {
+      0% { opacity: 0; transform: translateY(8px); }
+      16% { opacity: 1; transform: translateY(0); }
+      72% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(-4px); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .stage.is-playing .intro,
+      .stage.is-playing .request,
+      .stage.is-playing .you-line,
+      .stage.is-playing .mascot-intro,
+      .stage.is-playing .mascot-working,
+      .stage.is-playing .mascot-following,
+      .stage.is-playing .mascot-searching {
+        animation: none !important;
+        opacity: 0 !important;
+      }
+
+      .stage.is-playing .brand-reveal,
+      .stage.is-playing .mascot-final,
+      .stage.is-playing .working-mascot,
+      .stage.is-playing .working-label,
+      .stage.is-playing .closing-mascot,
+      .stage.is-playing .closing-name,
+      .stage.is-playing .closing-rule,
+      .stage.is-playing .closing-tagline {
+        animation: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main id="stage" class="stage" data-scene="opening" aria-live="polite">
+    <section class="scene scene-opening" aria-label="Opening hook">
+      <div class="opening-copy">
+        <p class="intro">Every small company has a mysterious employee called <em>somebody.</em></p>
+        <p class="request request-1">Can somebody get quotes?</p>
+        <p class="request request-2">Can somebody chase this?</p>
+        <p class="request request-3">Can somebody figure out whether this can arrive by Thursday?</p>
+        <p class="you-line">Usually, that somebody is you.</p>
+        <p class="brand-reveal">Somebody</p>
+      </div>
+
+      <div class="mascot-area" aria-hidden="true">
+        <img class="mascot-state mascot-intro" src="../brand/assets/mascot/somebody-neutral.webp" alt="" />
+        <img class="mascot-state mascot-working" src="../brand/assets/mascot/somebody-working.webp" alt="" />
+        <img class="mascot-state mascot-following" src="../brand/assets/mascot/somebody-following-up.webp" alt="" />
+        <img class="mascot-state mascot-searching" src="../brand/assets/mascot/somebody-searching.webp" alt="" />
+        <img class="mascot-state mascot-final" src="../brand/assets/mascot/somebody-neutral.webp" alt="" />
+      </div>
+    </section>
+
+    <section class="scene scene-working" aria-label="Working transition">
+      <img class="working-mascot" src="../brand/assets/mascot/somebody-working.webp" alt="Somebody working" />
+      <p class="working-label">Somebody is on it.</p>
+    </section>
+
+    <section class="scene scene-closing" aria-label="Closing card">
+      <div class="closing-copy">
+        <h1 class="closing-name">Somebody</h1>
+        <div class="closing-rule" aria-hidden="true"></div>
+        <p class="closing-tagline">Somebody has to do it. Now Somebody can.</p>
+      </div>
+      <img class="closing-mascot" src="../brand/assets/mascot/somebody-done-verified.webp" alt="Somebody done and verified" />
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const stage = document.getElementById('stage');
+      const scenes = ['opening', 'working', 'closing'];
+      const aliases = new Map([['transition', 'working']]);
+
+      function getSceneFromUrl() {
+        const requested = new URLSearchParams(window.location.search).get('scene') || 'opening';
+        const normalized = aliases.get(requested) || requested;
+        return scenes.includes(normalized) ? normalized : 'opening';
+      }
+
+      function restart() {
+        stage.classList.remove('is-playing');
+        void stage.offsetWidth;
+        requestAnimationFrame(() => stage.classList.add('is-playing'));
+      }
+
+      function setScene(nextScene, updateUrl = true) {
+        const scene = aliases.get(nextScene) || nextScene;
+        if (!scenes.includes(scene)) return;
+
+        stage.dataset.scene = scene;
+        if (updateUrl) {
+          const url = new URL(window.location.href);
+          url.searchParams.set('scene', scene);
+          history.replaceState({}, '', url);
+        }
+        restart();
+      }
+
+      function stepScene(delta) {
+        const currentIndex = scenes.indexOf(stage.dataset.scene);
+        const nextIndex = (currentIndex + delta + scenes.length) % scenes.length;
+        setScene(scenes[nextIndex]);
+      }
+
+      window.addEventListener('keydown', (event) => {
+        if (event.key.toLowerCase() === 'r') restart();
+        if (event.key === '1') setScene('opening');
+        if (event.key === '2') setScene('working');
+        if (event.key === '3') setScene('closing');
+        if (event.key === 'ArrowRight') stepScene(1);
+        if (event.key === 'ArrowLeft') stepScene(-1);
+      });
+
+      window.addEventListener('popstate', () => setScene(getSceneFromUrl(), false));
+      setScene(getSceneFromUrl(), false);
+    })();
+  </script>
+</body>
+</html>
