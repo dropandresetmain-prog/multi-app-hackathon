@@ -40,7 +40,8 @@ Do not rely on older pre-hackathon chat context when these files disagree.
 **Coding agents must name the exact Convex environment and deployment before any write, seed, migration/schema mutation, reset, or destructive action.** Current identifiers and pinning commands live in `docs/ENVIRONMENTS.md`.
 
 - Development: `acrobatic-swan-765` (project `dropandreset-main:multi-app-hackathon`) — the only environment allowed for normal coding.
-- Preview: NOT CREATED. Production: NOT CREATED. Both are write-protected by convention.
+- Preview: NOT CREATED. Write-protected by convention.
+- Production: `proficient-panda-882` exists and is write-protected / out of scope. Do not read or write it from ordinary coding tasks.
 - The same Convex team also holds the unrelated `army-of-interns` project; never target it from this repo.
 
 Never use an implicit or assumed Convex deployment.

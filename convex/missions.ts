@@ -10,14 +10,19 @@ import { internal } from "./_generated/api";
 import { mission, event, effect, receipt } from "./validators";
 import { assertDevelopment, DEVELOPMENT } from "./environment";
 import { commandSchema, agentCommandSchema } from "../lib/procurement/commands";
-import { createMission } from "../lib/procurement/fixtures";
+import {
+  createMission,
+  fixtureEvidence,
+  hydrateMission,
+} from "../lib/procurement/fixtures";
 import {
   applyCommand,
   beginVerification,
   effectForExecution,
+  refreshDerived,
 } from "../lib/procurement/domain";
 import { verifyReceipt } from "../lib/reliability/core";
-import type { Mission, MissionEvent } from "../lib/procurement/types";
+import type { Command, Mission, MissionEvent } from "../lib/procurement/types";
 
 const keyArgs = { key: v.string() };
 async function row(ctx: Pick<QueryCtx, "db">, key: string) {
@@ -71,7 +76,7 @@ export const view = query({
           .take(80)
       : [];
     return {
-      mission: found?.data ?? null,
+      mission: found ? hydrateMission(found.data as Mission) : null,
       events: events.map((e) => e.data),
       liveAiEnabled: process.env.LIVE_AI_ENABLED === "true",
       deployment: new URL(process.env.CONVEX_CLOUD_URL!).hostname.split(".")[0],
@@ -81,7 +86,8 @@ export const view = query({
 export const read = internalQuery({
   args: keyArgs,
   returns: mission,
-  handler: async (ctx, args) => (await row(ctx, args.key)).data,
+  handler: async (ctx, args) =>
+    hydrateMission((await row(ctx, args.key)).data as Mission),
 });
 export const apply = internalMutation({
   args: { key: v.string(), command: v.string(), runId: v.optional(v.string()) },
@@ -114,8 +120,15 @@ export const apply = internalMutation({
       return "Mission created";
     }
     const found = await row(ctx, args.key);
-    const m = found.data;
+    const m = hydrateMission(found.data as Mission);
     fence(m, args.runId);
+    let command: Command = c;
+    if (command.type === "ingest_fixture_observation") {
+      command = {
+        type: "ingest_external_evidence",
+        evidence: fixtureEvidence(m, command.vendorId, command.stage, Date.now()),
+      };
+    }
     if (c.type === "run_agent") {
       if (process.env.LIVE_AI_ENABLED !== "true")
         throw new Error(
@@ -123,7 +136,10 @@ export const apply = internalMutation({
         );
       if (m.run?.status === "running" && m.run.leaseUntil > Date.now())
         return "Agent is already running";
-      if (["complete", "blocked", "awaiting_approval"].includes(m.state))
+      if (
+        ["complete", "blocked", "awaiting_approval"].includes(m.state) ||
+        m.noViableOption
+      )
         throw new Error(
           "Agent is waiting for a human decision or this mission is finished",
         );
@@ -157,7 +173,11 @@ export const apply = internalMutation({
     }
     if (c.type === "execute_effect" || c.type === "verify_effect")
       throw new Error("Effect commands require the adapter boundary");
-    const message = applyCommand(m, c, Date.now());
+    const message = applyCommand(
+      m,
+      command as Parameters<typeof applyCommand>[1],
+      Date.now(),
+    );
     if (args.runId && m.run) m.run.toolCalls++;
     await ctx.db.patch(found._id, { data: m });
     await log(
@@ -166,9 +186,9 @@ export const apply = internalMutation({
       message,
       args.runId
         ? "agent"
-        : c.type === "inject_update"
+        : command.type === "ingest_external_evidence"
           ? "evidence"
-          : c.type === "approve" || c.type === "reject"
+          : command.type === "approve" || command.type === "reject"
             ? "decision"
             : "system",
     );
@@ -186,7 +206,7 @@ export const finishRun = internalMutation({
   handler: async (ctx, args) => {
     assertDevelopment();
     const found = await row(ctx, args.key);
-    const m = found.data;
+    const m = hydrateMission(found.data as Mission);
     if (m.run?.id !== args.runId || m.run.status !== "running") return null;
     m.run.status = args.failed ? "failed" : "stopped";
     m.run.summary = args.summary.slice(0, 500);
@@ -202,7 +222,7 @@ export const expireRun = internalMutation({
   handler: async (ctx, args) => {
     assertDevelopment();
     const found = await row(ctx, args.key);
-    const m = found.data;
+    const m = hydrateMission(found.data as Mission);
     if (
       m.run?.id !== args.runId ||
       m.run.status !== "running" ||
@@ -228,12 +248,13 @@ export const attempt = internalMutation({
   handler: async (ctx, args) => {
     assertDevelopment();
     const found = await row(ctx, args.key);
-    const m = found.data;
+    const m = hydrateMission(found.data as Mission);
     fence(m, args.runId);
     const e = effectForExecution(m, args.effectKey);
     if (e.status === "verified" || e.status === "unverified") return e;
     e.status = "attempted";
     e.attempts++;
+    refreshDerived(m);
     beginVerification(m);
     m.updatedAt = Date.now();
     if (args.runId && m.run) m.run.toolCalls++;
@@ -253,8 +274,9 @@ export const deliverFixture = internalMutation({
   handler: async (ctx, args) => {
     assertDevelopment();
     const found = await row(ctx, args.key);
-    fence(found.data, args.runId);
-    const e = effectForExecution(found.data, args.effectKey);
+    const mission = hydrateMission(found.data as Mission);
+    fence(mission, args.runId);
+    const e = effectForExecution(mission, args.effectKey);
     if (e.status === "pending")
       throw new Error("Record the attempt before adapter execution");
     const previous = await ctx.db
@@ -279,13 +301,14 @@ export const acknowledge = internalMutation({
   handler: async (ctx, args) => {
     assertDevelopment();
     const found = await row(ctx, args.key);
-    const m = found.data;
+    const m = hydrateMission(found.data as Mission);
     fence(m, args.runId);
     const e = effectForExecution(m, args.effectKey);
     if (e.status !== "verified") {
       e.status = "unverified";
       e.receiptId = args.receiptId;
     }
+    refreshDerived(m);
     await ctx.db.patch(found._id, { data: m });
     await log(
       ctx,
@@ -320,7 +343,7 @@ export const verify = internalMutation({
   handler: async (ctx, args) => {
     assertDevelopment();
     const found = await row(ctx, args.key);
-    const m = found.data;
+    const m = hydrateMission(found.data as Mission);
     fence(m, args.runId);
     const e = effectForExecution(m, args.effectKey);
     if (e.status === "verified") return "Already verified";
@@ -329,6 +352,7 @@ export const verify = internalMutation({
     verifyReceipt(e, args.observed);
     e.status = "verified";
     e.verifiedAt = Date.now();
+    refreshDerived(m);
     beginVerification(m);
     m.updatedAt = Date.now();
     if (args.runId && m.run) m.run.toolCalls++;

@@ -1,50 +1,76 @@
-import type { Evidence, Mission, Quote, Vendor } from "./types";
-export const emptyEvaluation = () => ({
-  status: "waiting" as const,
+import type {
+  EvidenceInput,
+  Evaluation,
+  Mission,
+  Quote,
+  SupplierRanking,
+  Vendor,
+} from "./types";
+
+export const DEVELOPMENT_ACCOUNTING_ENDPOINT = "dev.accounting.ledger";
+const DEVELOPMENT_ENDPOINTS: Record<string, string> = {
+  catalogue: "dev.web.everyday-co",
+  studio: "dev.gmail.paper-pine",
+  express: "dev.whatsapp.good-things",
+  social: "dev.instagram.little-objects",
+};
+
+export const emptyEvaluation = (): Evaluation => ({
+  status: "waiting",
   missing: [],
   conflicts: [],
   reasons: [],
+  requiredQuantity: null,
+  orderQuantity: null,
   totalCents: null,
   quote: {},
   currentEvidenceIds: [],
   supersededEvidenceIds: [],
+});
+export const emptyRanking = (evidenceVersion = 0): SupplierRanking => ({
+  evidenceVersion,
+  rankedVendorIds: [],
+  topVendorId: null,
+  noViableOption: false,
+  incompleteVendorIds: [],
 });
 export function createMission(
   key: string,
   request: string,
   now: number,
 ): Mission {
-  const vendors: Vendor[] = [
+  const configured = [
     {
       id: "catalogue",
       name: "The Everyday Co.",
-      channel: "Web",
+      channel: "Web" as const,
       product: "Canvas everyday tote",
     },
     {
       id: "studio",
       name: "Paper & Pine",
-      channel: "Gmail",
+      channel: "Gmail" as const,
       product: "Desk gift set",
     },
     {
       id: "express",
       name: "Good Things Studio",
-      channel: "WhatsApp",
+      channel: "WhatsApp" as const,
       product: "Custom canvas tote",
     },
     {
       id: "social",
       name: "Little Objects",
-      channel: "Instagram",
+      channel: "Instagram" as const,
       product: "Botanical desk kit",
     },
-  ].map((v) => ({
+  ];
+  const vendors: Vendor[] = configured.map((v) => ({
     ...v,
-    endpointRef: `fixture:${v.id}`,
-    contacted: false,
+    endpointRef: DEVELOPMENT_ENDPOINTS[v.id]!,
+    communication: "none",
     evaluation: emptyEvaluation(),
-  })) as Vendor[];
+  }));
   return {
     key,
     title: "Sponsor gifts, sorted.",
@@ -61,22 +87,69 @@ export function createMission(
     question: null,
     activity: "Ready to clarify your brief",
     evidenceVersion: 0,
+    accountingEndpointRef: DEVELOPMENT_ACCOUNTING_ENDPOINT,
     vendors,
     evidence: [],
     effects: [],
     recommendation: null,
+    ranking: emptyRanking(),
+    noViableOption: null,
     approvals: [],
     recommendationCounter: 0,
     run: null,
   };
 }
-// These are Development observations, not responses attributed to real providers.
+export function hydrateMission(raw: Mission): Mission {
+  return {
+    ...raw,
+    accountingEndpointRef:
+      raw.accountingEndpointRef || DEVELOPMENT_ACCOUNTING_ENDPOINT,
+    ranking: raw.ranking ?? emptyRanking(raw.evidenceVersion),
+    noViableOption: raw.noViableOption ?? null,
+    recommendation: raw.recommendation
+      ? {
+          ...raw.recommendation,
+          orderQuantity:
+            raw.recommendation.orderQuantity ?? raw.requirements.quantity ?? 0,
+        }
+      : null,
+    vendors: raw.vendors.map((vendor) => {
+      const legacy = vendor as Vendor & { contacted?: boolean };
+      return {
+        ...vendor,
+        communication: vendor.communication ?? (legacy.contacted ? "pending" : "none"),
+        evaluation: {
+          ...vendor.evaluation,
+          requiredQuantity:
+            vendor.evaluation.requiredQuantity ?? raw.requirements.quantity,
+          orderQuantity: vendor.evaluation.orderQuantity ?? null,
+        },
+      };
+    }),
+    evidence: raw.evidence.map((item) => {
+      const configured = raw.vendors.find((vendor) => vendor.id === item.vendorId);
+      return {
+        ...item,
+        provenance: item.provenance ?? {
+          provider: "fixture",
+          channel: configured?.channel ?? "Web",
+          observationId: item.id,
+          observedAt: item.observedAt,
+          sourceLabel: item.source,
+        },
+      };
+    }),
+  };
+}
+// Named Development observations. Domain policy never branches on these vendor IDs.
 export function fixtureEvidence(
   m: Mission,
   vendorId: string,
   stage: "initial" | "clarification" | "update",
   now: number,
-): Evidence {
+): EvidenceInput {
+  const configured = m.vendors.find((v) => v.id === vendorId);
+  if (!configured) throw new Error("Unknown vendor or unconfigured recipient endpoint");
   const deadline = m.requirements.deadlineAt!;
   const quantity = m.requirements.quantity!;
   const base: Quote = {
@@ -135,14 +208,23 @@ export function fixtureEvidence(
     text =
       "Our desk kits are $29 each, branded sleeves included. $30 delivery, no extra tax or setup. Ready in time.";
   }
+  const observationId = `${vendorId}:${stage}`;
   return {
-    id: `${vendorId}:${stage}`,
     vendorId,
-    source: `Development fixture / ${vendorId}`,
-    authority: vendorId === "catalogue" ? "catalogue" : "vendor",
+    source: `Development fixture / ${configured.channel}`,
+    authority: configured.channel === "Web" ? "catalogue" : "vendor",
     revision: stage === "initial" ? 1 : stage === "clarification" ? 2 : 3,
     observedAt: now,
     text,
     claims,
+    provenance: {
+      provider: "fixture",
+      channel: configured.channel,
+      observationId,
+      parentId: `fixture-thread:${vendorId}`,
+      observedAt: now,
+      retrievedAt: now,
+      sourceLabel: "Development fixture observation",
+    },
   };
 }

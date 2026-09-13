@@ -31,12 +31,12 @@ Disabling AI prevents new live runs. An already-running request may finish; fixt
 ## Demonstrate
 
 1. Create a mission. With live AI enabled, delegation starts the worker automatically. It asks for confirmation of quantity, **total** budget, exact deadline and branding. Confirm the brief to resume it.
-2. Watch four channels fill with fixture evidence. Paper & Pine lacks delivery/fee information; the agent chooses a clarification tool before recommending.
-3. Before approval, expand Development controls and inject the supplier update. Good Things Studio's delivery moves beyond the hard deadline. Its original price remains valid; its earlier delivery claim is superseded. Resume the worker to get a new recommendation.
+2. Watch four channels receive fixture observations through the same inbound evidence contract later adapters will use. A quote request only records an outbound intent; it does not manufacture vendor evidence. Paper & Pine lacks delivery/fee information; the agent chooses a clarification tool before recommending.
+3. Before approval, expand Development controls and ingest an authoritative update for the current lowest-cost supplier. Good Things Studio's delivery moves beyond the hard deadline. Its original price remains valid; its earlier delivery claim is superseded. Resume the worker to get a new recommendation. The winner is whatever the current evidence ranks, not a hard-coded vendor identity.
 4. Approve or reject the current recommendation. The action sends its version; stale browser approvals fail closed. Approval resumes the live worker. No agent tool can approve a recommendation.
 5. Watch attempts become unverified successes, then independently verified receipts. Only the application can complete the workflow. Injecting new evidence after approval freezes the mission for review.
 
-With live AI disabled, Development controls expose the same domain actions: collect each quote, clarify Paper & Pine, recommend an eligible option, inject the correction, recommend again, approve, execute each effect, verify each effect, and check completion.
+With live AI disabled, Development controls expose the same domain actions: request each quote, ingest each fixture observation, clarify Paper & Pine, ingest the clarification, recommend the current top-ranked eligible option, ingest a correction, recommend again, approve, execute each effect, verify each effect, and check completion. Outbound contact state comes from the effect lifecycle, not a standalone contacted flag.
 
 ```powershell
 npm run dev:fixture
@@ -47,7 +47,7 @@ Creates a fresh persisted fixture at the second recommendation, ready for approv
 ## Boundaries and durable state
 
 - `lib/agent/procurement.ts`: one SDK `Agent` + `Runner`, replaceable model provider and narrow tools. It receives persisted state on each run and after each tool. No durable SDK session, agent swarm, raw reasoning storage or trace export.
-- `lib/procurement/domain.ts`: quote sufficiency, landed-cost normalization (integer cents, explicit fees/tax, SGD), hard constraints, field-level source revision reconciliation, recommendation/approval policy, stable recipient resolution and procurement transitions.
+- `lib/procurement/domain.ts`: quote sufficiency, landed-cost normalization (integer cents, explicit fees/tax, SGD), `orderQuantity = max(requiredQuantity, MOQ)`, hard constraints, deterministic ranking, field-level source revision reconciliation, recommendation/approval policy, opaque recipient resolution and procurement transitions. Quote requests do not manufacture evidence.
 - `lib/reliability/core.ts`: the minimal **Core Worker Contract**, transition enforcement, effect authorization, exact receipt comparison and verification-based completion. No quote or vendor semantics.
 - `convex/missions.ts`: transactional writes to one bounded mission aggregate. Evidence, approval, recommendation and effect changes share an OCC transaction, closing stale-approval and duplicate-intent races. Limits: 4 configured vendors, 120 evidence records, 80 effects, 20 decisions per mission. Events are separately indexed; UI reads the newest 80.
 - `convex/effectAdapter.ts`: explicit attempt → fixture delivery → success acknowledgement, with separate read-back → verification. `fixtureReceipts` is an independent persisted Development transport ledger, **not proof of any real external API effect**. One receipt per effect key under transactional index lookup. Future adapters must implement provider idempotency/reconciliation rather than blindly retry ambiguous sends.
@@ -73,7 +73,15 @@ On 14 September 2026, `openrouter/free` passed the full persisted SDK workflow a
 
 ## Remaining integration milestone
 
-Next: **Google Workspace sourcing lane**. Resolve the real Calendar/Drive brief, bind a controlled Gmail vendor identity in application state, implement Gmail RFQ + reply/read-back + clarification with stable provider message IDs, and publish the normalized comparison to Sheets. Preserve Convex as SSOT. Prove duplicate/out-of-order replies and ambiguous sends against real external state. Keep vendor commitment and PO creation behind persisted approval. Unipile and QuickBooks remain subsequent narrow lanes.
+Shared-core generalization lands first so later lanes can plug into the same effect/evidence contracts. Then parallelize:
+
+- **Google Workspace:** Calendar / Drive context, controlled Gmail bindings, RFQ/reply/clarification with provider message identity, Sheets projection.
+- **Unipile:** WhatsApp / Instagram inbound and outbound through the same evidence/effect boundaries.
+- **Web:** real catalogue evidence / Exa if useful.
+- **QuickBooks:** approved PO create + independent read-back.
+- **Product UI:** chat-style delegation later.
+
+Do not rewrite procurement policy in those lanes.
 
 Before ingesting real sensitive data or hosting publicly, replace the public synthetic read surface and local Development capability with an explicitly scoped access design. This milestone excludes that work, real recipient bindings, external extraction accuracy, payments and public deployment.
 

@@ -20,7 +20,7 @@ Never commit secrets, tokens, refresh tokens, client secrets, API keys, private 
 | OpenAI API | **FALLBACK READY** | use only if free OpenRouter route is insufficiently reliable |
 | Exa | **READY** | API key ready as controlled web-search/evidence fallback |
 | Web catalogue | **BUILD-TIME PROOF PENDING** | choose exact real vendor/product page; retain source URL and public evidence |
-| Convex | **DEVELOPMENT PASS** | project `multi-app-hackathon`; Development `acrobatic-swan-765` schema push + bounded write + independent read-back + cleanup proven (2026-09-14); Preview / Production NOT CREATED — see `docs/ENVIRONMENTS.md` |
+| Convex | **DEVELOPMENT PASS** | project `multi-app-hackathon`; Development `acrobatic-swan-765` schema push + bounded write + independent read-back + cleanup proven (2026-09-14); Production `proficient-panda-882` exists and is write-protected / out of scope; Preview NOT CREATED — see `docs/ENVIRONMENTS.md` |
 | Vercel | **AVAILABLE** | deploy once app exists; prove public UI/webhook paths |
 
 ## Google runtime role

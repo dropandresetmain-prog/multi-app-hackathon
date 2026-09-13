@@ -471,7 +471,7 @@ Current Development deployment:
 
 `acrobatic-swan-765`
 
-Preview and Production are not currently created.
+Preview is not created. Production `proficient-panda-882` exists and is write-protected / out of scope.
 
 Exact environment rules live in `docs/ENVIRONMENTS.md`.
 

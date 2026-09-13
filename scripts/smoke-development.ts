@@ -70,10 +70,26 @@ async function main() {
   if (live) {
     const m = await run();
     assert.equal(m.state, "awaiting_approval");
-    assert.equal(m.recommendation?.vendorId, "express");
+    assert.equal(m.recommendation?.vendorId, m.ranking.topVendorId);
   } else {
     for (const vendorId of ["studio", "social", "express", "catalogue"])
       await send({ type: "request_quote", vendorId });
+    let pending = await read();
+    assert.equal(pending.evidence.length, 0);
+    assert.equal(
+      pending.vendors.find((v) => v.id === "studio")!.communication,
+      "pending",
+    );
+    assert.notEqual(
+      pending.vendors.find((v) => v.id === "studio")!.communication,
+      "verified",
+    );
+    for (const vendorId of ["studio", "social", "express", "catalogue"])
+      await send({
+        type: "ingest_fixture_observation",
+        vendorId,
+        stage: "initial",
+      });
     await assert.rejects(
       send({
         type: "recommend",
@@ -87,40 +103,52 @@ async function main() {
       question: "Confirm fees, tax and delivery",
     });
     await send({
+      type: "ingest_fixture_observation",
+      vendorId: "studio",
+      stage: "clarification",
+    });
+    pending = await read();
+    assert.equal(pending.ranking.topVendorId, "express");
+    await send({
       type: "recommend",
-      vendorId: "express",
+      vendorId: pending.ranking.topVendorId!,
       rationale: "Lowest complete eligible landed cost",
     });
   }
   let m = await read();
   const oldVersion = m.recommendation!.version;
+  const firstWinner = m.recommendation!.vendorId;
   assert.equal(m.approvals.length, 0);
   assert.equal(m.effects.filter((e) => e.gated).length, 0);
   await assert.rejects(
     send({
       type: "execute_effect",
-      effectKey: `purchase_order:${key}:express`,
+      effectKey: `purchase_order:${key}:${firstWinner}`,
     }),
   );
-  await send({ type: "inject_update" });
+  await send({
+    type: "ingest_fixture_observation",
+    vendorId: firstWinner,
+    stage: "update",
+  });
   await assert.rejects(
     send({ type: "approve", recommendationVersion: oldVersion }),
   );
   m = await read();
   assert.equal(m.state, "sourcing");
   assert.equal(
-    m.vendors.find((v) => v.id === "express")!.evaluation.status,
+    m.vendors.find((v) => v.id === firstWinner)!.evaluation.status,
     "ineligible",
   );
   if (live) {
     m = await run();
-    assert.equal(m.recommendation?.vendorId, "studio");
+    assert.equal(m.recommendation?.vendorId, m.ranking.topVendorId);
   } else {
     await send({
       type: "recommend",
-      vendorId: "studio",
+      vendorId: m.ranking.topVendorId!,
       rationale:
-        "Paper & Pine meets the hard deadline; the cheaper quote was superseded",
+        "The previous lowest-cost option is no longer eligible after the update",
     });
     m = await read();
   }
@@ -177,6 +205,7 @@ async function main() {
       evidence: independent.mission!.evidence.length,
       approvals: independent.mission!.approvals.length,
       effects: independent.mission!.effects.length,
+      ranking: independent.mission!.ranking,
       deployment: independent.deployment,
     }),
   );

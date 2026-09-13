@@ -23,9 +23,9 @@ The same team also contains the unrelated `army-of-interns` project. **Never tar
 | --- | --- | --- | --- | --- | --- |
 | **Development** | `acrobatic-swan-765` | `dev/dropandreset-main` | https://acrobatic-swan-765.convex.cloud (HTTP actions: `https://acrobatic-swan-765.convex.site`) | CREATED 2026-09-14 | **Allowed for normal coding.** Schema pushes, bounded writes and test data allowed; clean up test data where easy. |
 | **Preview** | — | — | — | **NOT CREATED** | Write-protected by convention. Create only via an explicit task (e.g. Vercel preview integration). |
-| **Production** | — | — | — | **NOT CREATED** (`prodDeploymentName: null`) | Write-protected by convention. No seed/reset/destructive mutation ever; deploys only via an explicit, named release task. |
+| **Production** | `proficient-panda-882` | `prod` | https://proficient-panda-882.convex.cloud | **CREATED** (write-protected) | **Out of scope for normal coding.** Read-only to coding agents. No seed, reset, schema mutation, or other write from this repo unless an explicit named release task says otherwise. Do not inspect production data during ordinary development. |
 
-Verified 2026-09-14 by independent read of the Convex management API: the project contains exactly one deployment (`acrobatic-swan-765`, type `dev`), no preview, no production.
+Verified 2026-09-14 against Convex tooling: Development `acrobatic-swan-765` and Production `proficient-panda-882` (agent-visible as read-only). No Preview deployment. Production exists and must not be treated as absent.
 
 ### Development deployment env vars (names only)
 
