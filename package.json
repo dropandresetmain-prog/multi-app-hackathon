@@ -17,11 +17,14 @@
     "qbo:oauth": "tsx scripts/qbo-oauth-bootstrap.ts",
     "qbo:prove": "tsx scripts/prove-quickbooks-po.ts",
     "convex:dev": "convex dev",
-    "convex:codegen": "convex codegen"
+    "convex:codegen": "convex codegen",
+    "prove:google": "tsx --env-file=.env.local scripts/prove-google-workspace.ts",
+    "google:oauth": "tsx --env-file=.env.local scripts/google-oauth-bootstrap.ts"
   },
   "dependencies": {
     "@openai/agents": "^0.18.0",
     "convex": "^1.45.0",
+    "googleapis": "^159.0.0",
     "next": "^16.3.5",
     "openai": "^7.15.0",
     "react": "^19.3.0",

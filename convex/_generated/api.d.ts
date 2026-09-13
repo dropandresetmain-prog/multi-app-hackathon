@@ -12,6 +12,7 @@ import type * as agent from "../agent.js";
 import type * as effectAdapter from "../effectAdapter.js";
 import type * as environment from "../environment.js";
 import type * as gateway from "../gateway.js";
+import type * as googleWorkspace from "../googleWorkspace.js";
 import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as missions from "../missions.js";
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   effectAdapter: typeof effectAdapter;
   environment: typeof environment;
   gateway: typeof gateway;
+  googleWorkspace: typeof googleWorkspace;
   health: typeof health;
   http: typeof http;
   missions: typeof missions;

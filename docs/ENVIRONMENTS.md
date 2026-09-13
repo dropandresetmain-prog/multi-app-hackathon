@@ -41,6 +41,10 @@ Verified 2026-09-14 against Convex tooling: Development `acrobatic-swan-765` and
 | `UNIPILE_WEBHOOK_SECRET` | `acrobatic-swan-765` | Auth for `/webhooks/unipile` (min 16 chars). |
 | `UNIPILE_BINDINGS_JSON` | `acrobatic-swan-765` + local | Opaque endpointRef → account/chat/user bindings JSON. |
 | `SOMEBODY_TIME_ZONE` | `acrobatic-swan-765` + local | IANA zone for weekday delivery phrasing (default `Asia/Singapore`). |
+| `GOOGLE_WORKSPACE_LIVE=true` | local / `acrobatic-swan-765` only when deliberately live | Enables real Gmail/Calendar/Drive/Sheets adapters. Keep false for fixture Gmail. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | local + optionally Development | OAuth for Google Workspace APIs (values never recorded here). |
+| `GMAIL_RECIPIENTS_JSON` / `GMAIL_VENDOR_STUDIO_TO` | local + Development | App-owned Gmail recipient bindings; model sees vendorId only. |
+| `GOOGLE_CALENDAR_EVENT_ID` / `GOOGLE_DRIVE_FOLDER_ID` / `GOOGLE_SHEETS_SPREADSHEET_ID` | local + Development | Bounded Calendar/Drive/Sheets resource IDs for the demo. |
 
 ## Pinning the target
 

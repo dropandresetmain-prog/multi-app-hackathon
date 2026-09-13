@@ -21,6 +21,28 @@ import {
   unipileConfigured,
 } from "../lib/unipile";
 
+function liveGoogle(): boolean {
+  return process.env.GOOGLE_WORKSPACE_LIVE === "true";
+}
+
+function gmailVendor(mission: Mission, effect: Effect) {
+  return mission.vendors.find(
+    (vendor) => vendor.id === effect.targetId && vendor.channel === "Gmail",
+  );
+}
+
+function threadFromMission(mission: Mission, vendorId: string): string | null {
+  const prior = [...mission.evidence]
+    .reverse()
+    .find(
+      (item) =>
+        item.vendorId === vendorId &&
+        item.provenance?.provider === "gmail" &&
+        item.provenance.parentId,
+    );
+  return prior?.provenance?.parentId ?? null;
+}
+
 function purchaseOrderIntent(mission: Mission, effect: Effect) {
   const vendor = mission.vendors.find((entry) => entry.id === effect.targetId);
   if (!vendor) throw new Error("Unknown vendor for purchase order effect");
@@ -150,8 +172,9 @@ async function verifyUnipile(
 // Transport boundary (not a plugin registry). Dispatch order matters:
 // 1) purchase_order → QuickBooks Sandbox create/reconcile + read-back
 // 2) WhatsApp/Instagram → Unipile when credentials + bindings are configured
-// 3) Web request_quote → public catalogue retrieval (never fixture injection)
-// 4) otherwise Development fixtures (Gmail remains fixture until Google lands)
+// 3) Gmail rfq/clarification → Google when GOOGLE_WORKSPACE_LIVE=true
+// 4) Web request_quote → public catalogue retrieval (never fixture injection)
+// 5) otherwise Development fixtures
 export async function dispatch(
   ctx: ActionCtx,
   key: string,
@@ -190,6 +213,32 @@ export async function dispatch(
       unipileConfigured(process.env) &&
       messagingProviderForEffect(mission, effect) !== null;
     if (liveUnipile) return await deliverUnipile(ctx, key, effect.key, runId);
+
+    const vendor = gmailVendor(mission, effect);
+    if (
+      liveGoogle() &&
+      vendor &&
+      (effect.kind === "rfq" || effect.kind === "clarification")
+    ) {
+      const delivered = await ctx.runAction(
+        internal.googleWorkspace.deliverGmailEffect,
+        {
+          effectKey: effect.key,
+          kind: effect.kind,
+          endpointRef: effect.endpointRef,
+          payload: effect.payload,
+          threadId: threadFromMission(mission, vendor.id),
+        },
+      );
+      // Payload identity stays in the transport ledger for exact match verification.
+      // receiptId carries the durable Gmail message id used for external read-back.
+      await ctx.runMutation(internal.missions.deliverFixture, args);
+      await ctx.runMutation(internal.missions.acknowledge, {
+        ...args,
+        receiptId: delivered.messageId,
+      });
+      return `Gmail ${effect.kind} accepted by API (message ${delivered.messageId}, thread ${delivered.threadId}); verification still required`;
+    }
 
     const receiptId = await ctx.runMutation(
       internal.missions.deliverFixture,
@@ -233,6 +282,28 @@ export async function dispatch(
       Boolean(loadBindings(process.env).length) &&
       messagingProviderForEffect(mission, effect) !== null;
     if (liveUnipile) return await verifyUnipile(ctx, key, effect.key, runId);
+
+    const vendor = gmailVendor(mission, effect);
+    if (
+      liveGoogle() &&
+      vendor &&
+      effect.receiptId &&
+      (effect.kind === "rfq" || effect.kind === "clarification")
+    ) {
+      await ctx.runAction(internal.googleWorkspace.readBackGmailEffect, {
+        effectKey: effect.key,
+        endpointRef: effect.endpointRef,
+        payload: effect.payload,
+        messageId: effect.receiptId,
+      });
+      const observed = await ctx.runQuery(internal.missions.readReceipt, {
+        effectKey: command.effectKey,
+      });
+      return await ctx.runMutation(internal.missions.verify, {
+        ...args,
+        observed,
+      });
+    }
 
     const observed = await ctx.runQuery(internal.missions.readReceipt, {
       effectKey: command.effectKey,
@@ -285,6 +356,9 @@ async function ingestInboundObservation(
     unipileConfigured(process.env) &&
     (configured.channel === "WhatsApp" || configured.channel === "Instagram");
   if (liveUnipileVendor) return;
+
+  // Live Gmail waits for real supplier replies via ingestGmailReplies.
+  if (liveGoogle() && configured.channel === "Gmail") return;
 
   const stage =
     command.type === "clarify_quote" ? "clarification" : "initial";
