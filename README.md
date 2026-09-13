@@ -67,7 +67,7 @@ Preflighted before implementation:
 - OpenRouter — key ready; free models preferred
 - OpenAI API — fallback available
 - Exa — key ready as controlled web-search/evidence fallback
-- Convex — Development deployment created and write/read-back proven; Preview and Production NOT CREATED (see `docs/ENVIRONMENTS.md`)
+- Convex — Development `acrobatic-swan-765` is the normal coding target. Production `proficient-panda-882` exists and is write-protected / out of scope. Preview is not created. See `docs/ENVIRONMENTS.md`.
 - Vercel — available for deployment
 
 ## Scope discipline

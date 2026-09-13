@@ -1,9 +1,11 @@
 import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { fixtureEvidence } from "../lib/procurement/fixtures";
 import type { AgentCommand } from "../lib/procurement/types";
 
-// Replace this Development adapter with provider-specific execute/read-back ports later.
-// Attempt persistence happens before delivery. Provider success and verification are separate calls.
+// Development fixture transport. Future Gmail / Unipile / web adapters replace
+// deliver/read-back and inbound observation here; they still call the same
+// effect and ingest_external_evidence contracts. Not a plugin registry.
 export async function dispatch(
   ctx: ActionCtx,
   key: string,
@@ -38,9 +40,24 @@ export async function dispatch(
       observed,
     });
   }
-  return await ctx.runMutation(internal.missions.apply, {
+  const result = await ctx.runMutation(internal.missions.apply, {
     key,
     command: JSON.stringify(command),
     ...(runId ? { runId } : {}),
   });
+  // Inbound fixture observation uses the same ingest contract as future adapters.
+  // It is not an agent tool and does not manufacture evidence inside domain policy.
+  if (command.type === "request_quote" || command.type === "clarify_quote") {
+    const mission = await ctx.runQuery(internal.missions.read, { key });
+    const stage =
+      command.type === "clarify_quote" ? "clarification" : "initial";
+    await ctx.runMutation(internal.missions.apply, {
+      key,
+      command: JSON.stringify({
+        type: "ingest_external_evidence",
+        evidence: fixtureEvidence(mission, command.vendorId, stage, Date.now()),
+      }),
+    });
+  }
+  return result;
 }

@@ -4,17 +4,23 @@ import {
   transition,
   type CoreWorkerContract,
 } from "../reliability/core";
-import { fixtureEvidence } from "./fixtures";
 import type {
   AgentCommand,
   Approval,
+  Channel,
+  CommunicationState,
   Effect,
   Evaluation,
   Evidence,
+  EvidenceInput,
+  EvidenceProvider,
+  EvidenceProvenance,
   Mission,
   Quote,
   QuoteField,
+  SupplierRanking,
   UserCommand,
+  Vendor,
   Workflow,
 } from "./types";
 
@@ -39,6 +45,12 @@ const fields: QuoteField[] = [
   "branded",
   "currency",
 ];
+const providerChannels: Record<Exclude<EvidenceProvider, "fixture">, Channel> = {
+  web: "Web",
+  gmail: "Gmail",
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+};
 function move(m: Mission, next: Workflow) {
   m.state = transition(m.state, next, transitions);
 }
@@ -55,11 +67,47 @@ function integer(
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
     throw new Error(`Invalid ${name}`);
 }
+function sameJson(a: unknown, b: unknown) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+export function evidenceId(input: EvidenceInput) {
+  return `${input.provenance.provider}:${input.provenance.observationId}`;
+}
 export function vendor(m: Mission, id: string) {
   const found = m.vendors.find((v) => v.id === id);
-  if (!found || found.endpointRef !== `fixture:${found.id}`)
+  if (!found || !found.endpointRef.trim())
     throw new Error("Unknown vendor or unconfigured recipient endpoint");
   return found;
+}
+export function communicationState(
+  m: Mission,
+  vendorId: string,
+): CommunicationState {
+  const latest = [...m.effects]
+    .reverse()
+    .find(
+      (e) =>
+        e.targetId === vendorId &&
+        (e.kind === "rfq" ||
+          e.kind === "clarification" ||
+          e.kind === "confirmation" ||
+          e.kind === "rejection"),
+    );
+  return latest?.status ?? "none";
+}
+function assertProvenanceMatchesVendor(
+  configured: Vendor,
+  provenance: EvidenceProvenance,
+) {
+  if (provenance.channel !== configured.channel)
+    throw new Error(
+      "Evidence provenance channel does not match the configured vendor channel",
+    );
+  if (provenance.provider === "fixture") return;
+  if (providerChannels[provenance.provider] !== configured.channel)
+    throw new Error(
+      "Evidence provider does not match the configured vendor channel",
+    );
 }
 export function evaluate(m: Mission, vendorId: string): Evaluation {
   const evidence = m.evidence.filter((e) => e.vendorId === vendorId);
@@ -76,7 +124,7 @@ export function evaluate(m: Mission, vendorId: string): Evaluation {
           b.revision - a.revision,
       );
     if (!candidates.length) continue;
-    const top = candidates[0];
+    const top = candidates[0]!;
     const peers = candidates.filter(
       (e) => e.authority === top.authority && e.revision === top.revision,
     );
@@ -97,7 +145,9 @@ export function evaluate(m: Mission, vendorId: string): Evaluation {
   );
   const reasons: string[] = [];
   const r = m.requirements;
+  const requiredQuantity = r.quantity;
   let totalCents: number | null = null;
+  let orderQuantity: number | null = null;
   if (
     r.quantity === null ||
     r.budgetCents === null ||
@@ -107,21 +157,25 @@ export function evaluate(m: Mission, vendorId: string): Evaluation {
     reasons.push("Mission requirements need confirmation");
   if (missing.length === 0 && conflicts.length === 0) {
     const q = quote as Quote;
-    totalCents =
-      q.quantity * q.unitCents + q.setupCents + q.deliveryCents + q.taxCents;
+    if (requiredQuantity !== null)
+      orderQuantity = Math.max(requiredQuantity, q.moq);
+    if (orderQuantity !== null)
+      totalCents =
+        orderQuantity * q.unitCents +
+        q.setupCents +
+        q.deliveryCents +
+        q.taxCents;
     if (q.currency !== "SGD")
       reasons.push("Currency must be SGD; conversion is not confirmed");
-    if (q.quantity !== r.quantity)
-      reasons.push("Quoted quantity does not match the brief");
-    if (q.moq > (r.quantity ?? 0))
-      reasons.push(`Minimum order ${q.moq} exceeds requested quantity`);
-    if (q.stock < (r.quantity ?? 0))
+    if (requiredQuantity !== null && q.quantity < requiredQuantity)
+      reasons.push("Quoted quantity does not cover the required quantity");
+    if (orderQuantity !== null && q.stock < orderQuantity)
       reasons.push("Insufficient confirmed stock");
     if (q.deliveryAt > (r.deadlineAt ?? 0))
       reasons.push("Delivery misses the hard deadline");
     if (r.branded && !q.branded)
       reasons.push("Required branding is unavailable");
-    if (totalCents > (r.budgetCents ?? 0))
+    if (totalCents !== null && totalCents > (r.budgetCents ?? 0))
       reasons.push("Landed cost exceeds the approved budget");
   }
   return {
@@ -135,36 +189,73 @@ export function evaluate(m: Mission, vendorId: string): Evaluation {
     missing,
     conflicts,
     reasons,
+    requiredQuantity,
+    orderQuantity,
     totalCents,
     quote,
     currentEvidenceIds: [...current],
     supersededEvidenceIds: evidence
       .filter((e) => !current.has(e.id))
       .map((e) => e.id),
-    supersededClaims: [...superseded].map(([evidenceId, fields]) => ({
-      evidenceId,
-      fields,
+    supersededClaims: [...superseded].map(([id, supersededFields]) => ({
+      evidenceId: id,
+      fields: supersededFields,
     })),
   };
 }
-export function ingestEvidence(m: Mission, e: Evidence) {
-  vendor(m, e.vendorId);
-  if (m.evidence.some((old) => old.id === e.id)) {
-    const old = m.evidence.find((old) => old.id === e.id)!;
-    if (
-      JSON.stringify(old.claims) !== JSON.stringify(e.claims) ||
-      old.revision !== e.revision ||
-      old.vendorId !== e.vendorId
-    )
-      throw new Error("Evidence identity was reused with different content");
-    return;
-  }
-  if (m.evidence.length >= 120)
-    throw new Error(
-      "Mission evidence limit reached; start a new Development mission",
+export function rankSuppliers(m: Mission): SupplierRanking {
+  const incomplete = m.vendors.filter(
+    (v) =>
+      v.evaluation.status === "waiting" ||
+      v.evaluation.status === "needs_clarification",
+  );
+  const eligible = m.vendors.filter(
+    (v) => v.evaluation.status === "eligible" && v.evaluation.totalCents !== null,
+  );
+  const ranked = [...eligible].sort(
+    (a, b) =>
+      a.evaluation.totalCents! - b.evaluation.totalCents! ||
+      a.id.localeCompare(b.id),
+  );
+  return {
+    evidenceVersion: m.evidenceVersion,
+    rankedVendorIds: ranked.map((v) => v.id),
+    topVendorId: ranked[0]?.id ?? null,
+    noViableOption:
+      m.vendors.length > 0 && incomplete.length === 0 && ranked.length === 0,
+    incompleteVendorIds: incomplete.map((v) => v.id),
+  };
+}
+export function refreshDerived(m: Mission) {
+  m.vendors.forEach((v) => {
+    v.evaluation = evaluate(m, v.id);
+    v.communication = communicationState(m, v.id);
+  });
+  m.ranking = rankSuppliers(m);
+}
+export function ingestEvidence(m: Mission, input: EvidenceInput) {
+  assertProvenanceMatchesVendor(vendor(m, input.vendorId), input.provenance);
+  integer(input.revision, "source revision", 1);
+  integer(input.observedAt, "observed at", 1, 9000000000000);
+  integer(input.provenance.observedAt, "provenance observed at", 1, 9000000000000);
+  if (input.provenance.retrievedAt !== undefined)
+    integer(
+      input.provenance.retrievedAt,
+      "retrieved at",
+      1,
+      9000000000000,
     );
-  integer(e.revision, "source revision", 1);
-  for (const [field, value] of Object.entries(e.claims)) {
+  bounded(input.provenance.observationId, "observation id", 200);
+  if (input.provenance.parentId)
+    bounded(input.provenance.parentId, "parent id", 200);
+  if (input.provenance.sourceLabel)
+    bounded(input.provenance.sourceLabel, "source label", 200);
+  if (input.provenance.url) {
+    bounded(input.provenance.url, "source url", 2000);
+    if (!/^https?:\/\//i.test(input.provenance.url))
+      throw new Error("Evidence URL must be an http(s) locator");
+  }
+  for (const [field, value] of Object.entries(input.claims)) {
     if (!fields.includes(field as QuoteField))
       throw new Error("Unknown quote field");
     if (field === "branded") {
@@ -180,11 +271,32 @@ export function ingestEvidence(m: Mission, e: Evidence) {
         field === "deliveryAt" ? 9000000000000 : 100000000,
       );
   }
-  m.evidence.push(e);
+  const record: Evidence = { ...input, id: evidenceId(input) };
+  const existing = m.evidence.find((old) => old.id === record.id);
+  if (existing) {
+    if (
+      !sameJson(existing.claims, record.claims) ||
+      existing.revision !== record.revision ||
+      existing.vendorId !== record.vendorId ||
+      existing.authority !== record.authority ||
+      existing.text !== record.text ||
+      !sameJson(existing.provenance, record.provenance)
+    )
+      throw new Error("Evidence identity was reused with different content");
+    return;
+  }
+  if (m.evidence.length >= 120)
+    throw new Error(
+      "Mission evidence limit reached; start a new Development mission",
+    );
+  m.evidence.push(record);
   m.evidenceVersion++;
-  m.vendors.forEach((v) => {
-    v.evaluation = evaluate(m, v.id);
-  });
+  refreshDerived(m);
+  if (
+    m.noViableOption &&
+    m.noViableOption.evidenceVersion !== m.evidenceVersion
+  )
+    m.noViableOption = null;
   // Even a still-viable winner needs a new decision against changed evidence.
   if (m.state === "awaiting_approval") {
     move(m, "sourcing");
@@ -234,7 +346,7 @@ function addEffect(
     targetId,
     endpointRef:
       kind === "purchase_order"
-        ? "fixture:accounting"
+        ? m.accountingEndpointRef
         : vendor(m, targetId).endpointRef,
     payload,
     gated,
@@ -246,13 +358,15 @@ function addEffect(
   });
 }
 export function effectForExecution(m: Mission, key: string): Effect {
-  const e = m.effects.find((e) => e.key === key);
+  const e = m.effects.find((effect) => effect.key === key);
   if (!e) throw new Error("Unknown effect");
   if (e.kind !== "purchase_order") {
     if (vendor(m, e.targetId).endpointRef !== e.endpointRef)
       throw new Error("Recipient binding changed");
-  } else if (e.endpointRef !== "fixture:accounting")
+  } else if (!m.accountingEndpointRef.trim())
     throw new Error("Unknown accounting endpoint");
+  else if (e.endpointRef !== m.accountingEndpointRef)
+    throw new Error("Accounting endpoint binding changed");
   authorizeEffect(contract(m), e);
   if (e.gated && !["approved", "verifying", "complete"].includes(m.state))
     throw new Error("Commitment is not allowed in this workflow state");
@@ -266,6 +380,7 @@ export function applyCommand(
     | { type: "run_agent" }
     | { type: "execute_effect" }
     | { type: "verify_effect" }
+    | { type: "ingest_fixture_observation" }
   >,
   now: number,
 ): string {
@@ -292,18 +407,22 @@ export function applyCommand(
       };
       m.question = null;
       move(m, "sourcing");
+      refreshDerived(m);
       message = "Brief confirmed. Ready to source four vendor options.";
       break;
     case "request_quote": {
       if (m.state !== "sourcing")
         throw new Error("Sourcing requires confirmed requirements");
       const v = vendor(m, command.vendorId);
-      if (v.contacted) return "Quote already requested; duplicate prevented.";
-      v.contacted = true;
-      if (v.channel !== "Web")
+      if (v.channel !== "Web") {
+        const existing = m.effects.find(
+          (e) => e.kind === "rfq" && e.targetId === v.id,
+        );
+        if (existing) return "Quote already requested; duplicate prevented.";
         addEffect(m, "rfq", v.id, JSON.stringify(m.requirements));
-      ingestEvidence(m, fixtureEvidence(m, v.id, "initial", now));
-      message = `${v.name}: received initial Development evidence.`;
+      }
+      refreshDerived(m);
+      message = `${v.name}: sourcing request recorded. Waiting for external evidence.`;
       break;
     }
     case "clarify_quote": {
@@ -311,54 +430,81 @@ export function applyCommand(
         throw new Error("Clarification is only allowed while sourcing");
       bounded(command.question, "Question");
       const v = vendor(m, command.vendorId);
-      if (!v.contacted) throw new Error("Request a quote first");
       if (v.channel === "Web")
         throw new Error("Catalogue vendor has no outreach channel");
-      // One clarification set per current evidence version; retries share its logical identity.
-      const suffix = `:${m.evidenceVersion}`;
-      if (!m.evidence.some((e) => e.id === `${v.id}:clarification`)) {
-        addEffect(m, "clarification", v.id, command.question, suffix);
-        ingestEvidence(m, fixtureEvidence(m, v.id, "clarification", now));
-      }
-      message = `${v.name}: clarification evidence reconciled.`;
+      if (!m.effects.some((e) => e.kind === "rfq" && e.targetId === v.id))
+        throw new Error("Request a quote first");
+      addEffect(
+        m,
+        "clarification",
+        v.id,
+        command.question,
+        `:${m.evidenceVersion}`,
+      );
+      refreshDerived(m);
+      message = `${v.name}: clarification requested. Waiting for external evidence.`;
       break;
     }
-    case "inject_update":
-      if (!m.vendors.find((v) => v.id === "express")?.contacted)
-        throw new Error("Collect Good Things Studio's initial quote first");
-      ingestEvidence(m, fixtureEvidence(m, "express", "update", now));
-      message =
-        "Delivery correction: Good Things Studio now misses the deadline. Earlier evidence is retained.";
+    case "ingest_external_evidence":
+      ingestEvidence(m, command.evidence);
+      message = `${vendor(m, command.evidence.vendorId).name}: external evidence ingested.`;
       break;
     case "recommend": {
       if (m.state !== "sourcing")
         throw new Error("Recommendation requires sourcing state");
       bounded(command.rationale, "Recommendation rationale");
-      if (
-        m.vendors.some(
-          (v) => !v.contacted || v.evaluation.status === "needs_clarification",
-        )
-      )
+      refreshDerived(m);
+      if (m.ranking.incompleteVendorIds.length)
         throw new Error(
           "Collect and clarify all shortlisted quotes before comparison",
         );
+      if (m.ranking.noViableOption)
+        throw new Error(
+          "No current supplier satisfies the confirmed constraints",
+        );
       const v = vendor(m, command.vendorId);
-      v.evaluation = evaluate(m, v.id);
       if (
         v.evaluation.status !== "eligible" ||
-        v.evaluation.totalCents === null
+        v.evaluation.totalCents === null ||
+        v.evaluation.orderQuantity === null
       )
         throw new Error("Only a complete, eligible quote can be recommended");
+      if (m.ranking.topVendorId !== v.id)
+        throw new Error(
+          "A higher-ranked eligible supplier exists under the active policy",
+        );
       m.recommendationCounter++;
       m.recommendation = {
         vendorId: v.id,
         version: m.recommendationCounter,
         evidenceVersion: m.evidenceVersion,
         totalCents: v.evaluation.totalCents,
+        orderQuantity: v.evaluation.orderQuantity,
         rationale: command.rationale,
       };
+      m.noViableOption = null;
       move(m, "awaiting_approval");
       message = `${v.name} recommended. Human approval required before any commitment.`;
+      break;
+    }
+    case "record_no_viable_option": {
+      if (m.state !== "sourcing")
+        throw new Error("No-viable-option can only be recorded while sourcing");
+      bounded(command.reason, "Reason");
+      refreshDerived(m);
+      if (m.ranking.incompleteVendorIds.length)
+        throw new Error(
+          "Collect and clarify all shortlisted quotes before concluding there is no viable option",
+        );
+      if (!m.ranking.noViableOption)
+        throw new Error("An eligible supplier still exists");
+      m.recommendation = null;
+      m.noViableOption = {
+        evidenceVersion: m.evidenceVersion,
+        reason: command.reason,
+      };
+      message =
+        "No current supplier satisfies the confirmed constraints. No recommendation or commitment was created.";
       break;
     }
     case "approve":
@@ -408,7 +554,8 @@ export function applyCommand(
       move(m, "approved");
       const payload = JSON.stringify({
         vendorId: rec.vendorId,
-        quantity: m.requirements.quantity,
+        requiredQuantity: m.requirements.quantity,
+        orderQuantity: rec.orderQuantity,
         totalCents: rec.totalCents,
         currency: "SGD",
         evidenceVersion: rec.evidenceVersion,
@@ -425,6 +572,7 @@ export function applyCommand(
           ),
         );
       addEffect(m, "purchase_order", rec.vendorId, payload);
+      refreshDerived(m);
       message =
         "Human approval persisted. Development commitment effects are now permitted.";
       break;

@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { createMission, fixtureEvidence } from "../lib/procurement/fixtures";
 import {
   applyCommand,
+  communicationState,
   contract,
   effectForExecution,
   evaluate,
   ingestEvidence,
+  refreshDerived,
 } from "../lib/procurement/domain";
 import {
   assertComplete,
@@ -40,16 +42,34 @@ function sourcing() {
   );
   return m;
 }
+function collect(m: ReturnType<typeof sourcing>, vendorId: string) {
+  applyCommand(m, { type: "request_quote", vendorId }, now);
+  applyCommand(
+    m,
+    {
+      type: "ingest_external_evidence",
+      evidence: fixtureEvidence(m, vendorId, "initial", now),
+    },
+    now,
+  );
+}
 function compared() {
   const m = sourcing();
-  for (const v of m.vendors)
-    applyCommand(m, { type: "request_quote", vendorId: v.id }, now);
+  for (const v of m.vendors) collect(m, v.id);
   applyCommand(
     m,
     {
       type: "clarify_quote",
       vendorId: "studio",
       question: "Confirm total charges and delivery",
+    },
+    now,
+  );
+  applyCommand(
+    m,
+    {
+      type: "ingest_external_evidence",
+      evidence: fixtureEvidence(m, "studio", "clarification", now),
     },
     now,
   );
@@ -61,16 +81,36 @@ function recommended() {
     m,
     {
       type: "recommend",
-      vendorId: "express",
+      vendorId: m.ranking.topVendorId!,
       rationale: "Lowest eligible landed cost",
     },
     now,
   );
   return m;
 }
+function ingestUpdate(m: ReturnType<typeof sourcing>, vendorId: string, at = now + 100) {
+  applyCommand(
+    m,
+    {
+      type: "ingest_external_evidence",
+      evidence: fixtureEvidence(m, vendorId, "update", at),
+    },
+    at,
+  );
+}
 test("incomplete quote cannot be compared, recommended, or normalized with invented zero fees", () => {
   const m = sourcing();
   applyCommand(m, { type: "request_quote", vendorId: "studio" }, now);
+  assert.equal(m.evidence.length, 0);
+  assert.equal(evaluate(m, "studio").status, "waiting");
+  applyCommand(
+    m,
+    {
+      type: "ingest_external_evidence",
+      evidence: fixtureEvidence(m, "studio", "initial", now),
+    },
+    now,
+  );
   const e = evaluate(m, "studio");
   assert.equal(e.status, "needs_clarification");
   assert.equal(e.totalCents, null);
@@ -96,15 +136,16 @@ test("landed cost includes all fees and hard constraints disqualify cheaper vend
 test("new authoritative evidence supersedes stale fields, keeps history and invalidates a recommendation", () => {
   const m = recommended();
   const oldVersion = m.recommendation!.version;
-  applyCommand(m, { type: "inject_update" }, now + 100);
+  const winnerId = m.recommendation!.vendorId;
+  ingestUpdate(m, winnerId);
   assert.equal(m.state, "sourcing");
   assert.equal(m.recommendation, null);
-  assert.equal(evaluate(m, "express").status, "ineligible");
-  assert.equal(m.evidence.filter((e) => e.vendorId === "express").length, 2);
-  assert.equal(evaluate(m, "express").quote.unitCents, 1800);
+  assert.equal(evaluate(m, winnerId).status, "ineligible");
+  assert.equal(m.evidence.filter((e) => e.vendorId === winnerId).length, 2);
+  assert.equal(evaluate(m, winnerId).quote.unitCents, 1800);
   assert.deepEqual(
-    evaluate(m, "express").supersededClaims?.find(
-      (e) => e.evidenceId === "express:initial",
+    evaluate(m, winnerId).supersededClaims?.find(
+      (e) => e.evidenceId === `fixture:${winnerId}:initial`,
     )?.fields,
     ["deliveryAt"],
   );
@@ -116,24 +157,33 @@ test("new authoritative evidence supersedes stale fields, keeps history and inva
     ),
   );
   ingestEvidence(m, {
-    ...fixtureEvidence(m, "express", "initial", now),
-    id: "late-arriving-old-evidence",
+    ...fixtureEvidence(m, winnerId, "initial", now),
+    provenance: {
+      ...fixtureEvidence(m, winnerId, "initial", now).provenance,
+      observationId: "late-arriving-old-evidence",
+    },
     observedAt: now + 200,
   });
-  assert.equal(evaluate(m, "express").status, "ineligible");
+  assert.equal(evaluate(m, winnerId).status, "ineligible");
 });
 test("equally authoritative conflicting evidence stays unresolved until a higher revision", () => {
   const m = compared();
   ingestEvidence(m, {
     ...fixtureEvidence(m, "express", "initial", now),
-    id: "conflict",
+    provenance: {
+      ...fixtureEvidence(m, "express", "initial", now).provenance,
+      observationId: "conflict",
+    },
     claims: { unitCents: 1900 },
   });
   assert.deepEqual(evaluate(m, "express").conflicts, ["unitCents"]);
   assert.equal(evaluate(m, "express").totalCents, null);
   ingestEvidence(m, {
     ...fixtureEvidence(m, "express", "clarification", now),
-    id: "resolution",
+    provenance: {
+      ...fixtureEvidence(m, "express", "clarification", now).provenance,
+      observationId: "resolution",
+    },
     claims: { unitCents: 1900 },
   });
   assert.equal(evaluate(m, "express").status, "eligible");
@@ -168,8 +218,12 @@ test("model tools cannot supply recipient identity, human approval or authoritat
     }),
   );
   assert.throws(() =>
-    commandSchema.parse({ type: "inject_update", claims: { unitCents: 1 } }),
+    agentCommandSchema.parse({
+      type: "ingest_external_evidence",
+      evidence: fixtureEvidence(sourcing(), "studio", "initial", now),
+    }),
   );
+  assert.throws(() => commandSchema.parse({ type: "inject_update" }));
   assert.throws(() =>
     applyCommand(
       sourcing(),
@@ -201,7 +255,7 @@ test("commitment needs persisted approval and approval/effect intent retries do 
   assert.equal(m.effects.filter((e) => e.kind === "purchase_order").length, 1);
   const po = m.effects.find((e) => e.kind === "purchase_order")!;
   assert.equal(effectForExecution(m, po.key).status, "pending");
-  applyCommand(m, { type: "inject_update" }, now + 100);
+  ingestUpdate(m, m.recommendation!.vendorId);
   assert.equal(m.state, "blocked");
   assert.throws(() => effectForExecution(m, po.key));
 });
@@ -222,7 +276,7 @@ test("attempted and successful-but-unverified effects cannot complete the workfl
 test("read-back validates stable identity, endpoint and payload; missing observations fail", () => {
   const expected = {
     key: "po:1",
-    endpointRef: "fixture:accounting",
+    endpointRef: "dev.accounting.ledger",
     payload: "25 gifts:62500",
   };
   assert.throws(() => verifyReceipt(expected, null));
@@ -243,7 +297,17 @@ test("an outstanding sourcing effect still blocks completion after commitment ef
   assert.throws(() => assertComplete(contract(m), m.effects));
 });
 test("initial requests and clarification retries preserve logical identity and evidence history", () => {
-  const m = compared();
+  const m = sourcing();
+  for (const v of m.vendors) collect(m, v.id);
+  applyCommand(
+    m,
+    {
+      type: "clarify_quote",
+      vendorId: "studio",
+      question: "Confirm total charges and delivery",
+    },
+    now,
+  );
   const count = m.effects.length;
   const evidenceCount = m.evidence.length;
   applyCommand(m, { type: "request_quote", vendorId: "studio" }, now);
@@ -328,4 +392,15 @@ test("actual Agents SDK Runner invokes registered procurement tools (injected te
   assert.equal(calls, 1);
   assert.match(m.question!, /budget/);
   assert.equal(m.state, "clarifying");
+});
+test("RFQ intent alone is not verified contact", () => {
+  const m = sourcing();
+  applyCommand(m, { type: "request_quote", vendorId: "studio" }, now);
+  assert.equal(communicationState(m, "studio"), "pending");
+  assert.notEqual(communicationState(m, "studio"), "verified");
+  const rfq = m.effects.find((e) => e.kind === "rfq")!;
+  rfq.status = "unverified";
+  refreshDerived(m);
+  assert.equal(communicationState(m, "studio"), "unverified");
+  assert.notEqual(communicationState(m, "studio"), "verified");
 });

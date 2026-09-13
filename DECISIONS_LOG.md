@@ -193,5 +193,5 @@ This repository is the implementation-era source of truth from 14 September 2026
 
 **Decision:** Next.js (App Router) + TypeScript + React + Convex, deployed to Vercel later. No UI framework added at bootstrap.
 
-**Convex:** team `dropandreset-main`, project `multi-app-hackathon`. Development deployment `acrobatic-swan-765` is the only environment allowed for normal coding. Preview and Production are NOT CREATED and write-protected by convention. Identifiers and pinning rules live in `docs/ENVIRONMENTS.md`.
+**Convex:** team `dropandreset-main`, project `multi-app-hackathon`. Development deployment `acrobatic-swan-765` is the only environment allowed for normal coding. Preview is not created. Production `proficient-panda-882` exists and is write-protected / out of scope. Identifiers and pinning rules live in `docs/ENVIRONMENTS.md`.
 

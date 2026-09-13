@@ -117,6 +117,15 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     </svg>
   );
 }
+function communicationLabel(state: Vendor["communication"]) {
+  return {
+    none: "No outbound intent",
+    pending: "Intent pending",
+    attempted: "Send attempted",
+    unverified: "Provider success, unverified",
+    verified: "Verified contact",
+  }[state];
+}
 function channelMark(channel: Vendor["channel"]) {
   return { Web: "◎", Gmail: "M", WhatsApp: "W", Instagram: "I" }[channel];
 }
@@ -608,9 +617,9 @@ function AgentControls({
   pending: string | null;
   send: (command: Command, label?: string) => Promise<void>;
 }) {
-  const waiting = ["awaiting_approval", "complete", "blocked"].includes(
-    mission.state,
-  );
+  const waiting =
+    ["awaiting_approval", "complete", "blocked"].includes(mission.state) ||
+    mission.noViableOption !== null;
   return (
     <div className="agent-controls">
       <span>
@@ -876,7 +885,7 @@ function VendorCard({
         </details>
       )}
       <div className="vendor-foot">
-        <span>{vendor.contacted ? "Contact recorded" : "Not contacted"}</span>
+        <span>{communicationLabel(vendor.communication ?? "none")}</span>
         <strong>{formatMoney(vendor.evaluation.totalCents)}</strong>
       </div>
     </article>
@@ -888,7 +897,7 @@ const quoteFields: {
   label: string;
   format?: "money" | "date" | "bool";
 }[] = [
-  { key: "quantity", label: "Qty" },
+  { key: "quantity", label: "Quoted qty" },
   { key: "unitCents", label: "Unit", format: "money" },
   { key: "setupCents", label: "Setup", format: "money" },
   { key: "deliveryCents", label: "Delivery", format: "money" },
@@ -911,7 +920,13 @@ function Comparison({ mission }: { mission: Mission }) {
           <span className="eyebrow">03 · Normalized comparison</span>
           <h2>Comparable facts only</h2>
         </div>
-        <span className="section-note">Unknowns stay unknown</span>
+        <span className="section-note">
+          {mission.ranking?.topVendorId
+            ? `Top ranked: ${mission.vendors.find((vendor) => vendor.id === mission.ranking?.topVendorId)?.name ?? mission.ranking.topVendorId}`
+            : mission.ranking?.noViableOption
+              ? "No viable option"
+              : "Unknowns stay unknown"}
+        </span>
       </div>
       <div className="table-wrap">
         <table>
@@ -921,6 +936,7 @@ function Comparison({ mission }: { mission: Mission }) {
               {quoteFields.map((field) => (
                 <th key={field.key}>{field.label}</th>
               ))}
+              <th>Order qty</th>
               <th>Landed</th>
               <th>Decision</th>
             </tr>
@@ -942,6 +958,7 @@ function Comparison({ mission }: { mission: Mission }) {
                     )}
                   </td>
                 ))}
+                <td>{vendor.evaluation.orderQuantity ?? "—"}</td>
                 <td className="landed">
                   {formatMoney(vendor.evaluation.totalCents)}
                 </td>
@@ -1006,7 +1023,12 @@ function ApprovalCard({
               : "Waiting"}
         </span>
       </div>
-      {recommendation && vendor ? (
+      {mission.noViableOption && !recommendation ? (
+        <p className="empty-copy">
+          No current supplier satisfies the confirmed constraints.
+          {` ${mission.noViableOption.reason}`} No commitment effect was created.
+        </p>
+      ) : recommendation && vendor ? (
         <div className="recommendation-body">
           <div className="recommendation-pick">
             <span>Recommended vendor</span>
@@ -1014,7 +1036,10 @@ function ApprovalCard({
             <strong>{formatMoney(recommendation.totalCents)}</strong>
             <small>
               Recommendation v{recommendation.version} · evidence v
-              {recommendation.evidenceVersion}
+              {recommendation.evidenceVersion} · order qty{" "}
+              {recommendation.orderQuantity ??
+                vendor.evaluation.orderQuantity ??
+                "—"}
             </small>
           </div>
           <div className="recommendation-reason">
@@ -1211,8 +1236,8 @@ function DevelopmentControls({
           <div>
             <h3>Request fixture quotes</h3>
             <p>
-              Create deterministic RFQ effects using each vendor’s stored
-              endpoint.
+              Create deterministic sourcing intents. Evidence arrives separately
+              through the inbound observation contract.
             </p>
           </div>
           <div className="button-row">
@@ -1235,21 +1260,63 @@ function DevelopmentControls({
         </div>
         <div className="control-group">
           <div>
-            <h3>Inject changed evidence</h3>
+            <h3>Ingest fixture observations</h3>
             <p>
-              Apply the prepared supplier correction and show stale evidence
-              being superseded.
+              Deliver Development evidence through the same ingest contract
+              future Gmail, Unipile, and web adapters will use.
             </p>
           </div>
-          <button
-            className="button tertiary"
-            disabled={Boolean(pending)}
-            onClick={() =>
-              void send({ type: "inject_update" }, "inject supplier update")
-            }
-          >
-            Inject supplier update
-          </button>
+          <div className="button-row">
+            {mission.vendors.map((vendor) => (
+              <button
+                className="button tertiary"
+                disabled={Boolean(pending)}
+                key={`obs-${vendor.id}`}
+                onClick={() =>
+                  void send(
+                    {
+                      type: "ingest_fixture_observation",
+                      vendorId: vendor.id,
+                      stage: "initial",
+                    },
+                    `observe ${vendor.name}`,
+                  )
+                }
+              >
+                Observe {vendor.name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="control-group">
+          <div>
+            <h3>Ingest an authoritative update</h3>
+            <p>
+              Later evidence for any configured vendor. History is kept; stale
+              claims are superseded.
+            </p>
+          </div>
+          <div className="button-row">
+            {mission.vendors.map((vendor) => (
+              <button
+                className="button tertiary"
+                disabled={Boolean(pending)}
+                key={`upd-${vendor.id}`}
+                onClick={() =>
+                  void send(
+                    {
+                      type: "ingest_fixture_observation",
+                      vendorId: vendor.id,
+                      stage: "update",
+                    },
+                    `update ${vendor.name}`,
+                  )
+                }
+              >
+                Update {vendor.name}
+              </button>
+            ))}
+          </div>
         </div>
         <form
           className="control-group control-form"
@@ -1299,6 +1366,23 @@ function DevelopmentControls({
           >
             Queue clarification
           </button>
+          <button
+            className="button tertiary"
+            type="button"
+            disabled={Boolean(pending) || !clarifyVendor}
+            onClick={() =>
+              void send(
+                {
+                  type: "ingest_fixture_observation",
+                  vendorId: clarifyVendor,
+                  stage: "clarification",
+                },
+                "observe clarification",
+              )
+            }
+          >
+            Observe clarification
+          </button>
         </form>
         <form
           className="control-group control-form"
@@ -1342,6 +1426,23 @@ function DevelopmentControls({
             disabled={Boolean(pending) || !recommendVendor}
           >
             Recommend
+          </button>
+          <button
+            className="button tertiary"
+            type="button"
+            disabled={Boolean(pending) || !mission.ranking?.noViableOption}
+            onClick={() =>
+              void send(
+                {
+                  type: "record_no_viable_option",
+                  reason:
+                    "Every fully evaluated supplier fails a hard constraint.",
+                },
+                "record no viable option",
+              )
+            }
+          >
+            Record no viable option
           </button>
         </form>
         {(executable.length > 0 || verifiable.length > 0) && (

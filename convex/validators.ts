@@ -13,6 +13,27 @@ export const quote = v.object({
   branded: v.optional(v.boolean()),
   currency: v.optional(v.string()),
 });
+export const provenance = v.object({
+  provider: v.union(
+    v.literal("fixture"),
+    v.literal("web"),
+    v.literal("gmail"),
+    v.literal("whatsapp"),
+    v.literal("instagram"),
+  ),
+  channel: v.union(
+    v.literal("Web"),
+    v.literal("Gmail"),
+    v.literal("WhatsApp"),
+    v.literal("Instagram"),
+  ),
+  observationId: v.string(),
+  parentId: v.optional(v.string()),
+  url: v.optional(v.string()),
+  observedAt: v.number(),
+  retrievedAt: v.optional(v.number()),
+  sourceLabel: v.optional(v.string()),
+});
 export const effect = v.object({
   key: v.string(),
   kind: v.union(
@@ -36,6 +57,33 @@ export const effect = v.object({
   attempts: v.number(),
   receiptId: nullableString,
   verifiedAt: nullableNumber,
+});
+const evaluation = v.object({
+  status: v.union(
+    v.literal("waiting"),
+    v.literal("needs_clarification"),
+    v.literal("eligible"),
+    v.literal("ineligible"),
+  ),
+  missing: v.array(v.string()),
+  conflicts: v.array(v.string()),
+  reasons: v.array(v.string()),
+  requiredQuantity: v.optional(nullableNumber),
+  orderQuantity: v.optional(nullableNumber),
+  totalCents: nullableNumber,
+  quote,
+  currentEvidenceIds: v.array(v.string()),
+  supersededEvidenceIds: v.array(v.string()),
+  supersededClaims: v.optional(
+    v.array(v.object({ evidenceId: v.string(), fields: v.array(v.string()) })),
+  ),
+});
+const ranking = v.object({
+  evidenceVersion: v.number(),
+  rankedVendorIds: v.array(v.string()),
+  topVendorId: nullableString,
+  noViableOption: v.boolean(),
+  incompleteVendorIds: v.array(v.string()),
 });
 export const mission = v.object({
   key: v.string(),
@@ -61,6 +109,7 @@ export const mission = v.object({
   question: nullableString,
   activity: v.string(),
   evidenceVersion: v.number(),
+  accountingEndpointRef: v.optional(v.string()),
   recommendationCounter: v.number(),
   vendors: v.array(
     v.object({
@@ -74,27 +123,17 @@ export const mission = v.object({
       ),
       product: v.string(),
       endpointRef: v.string(),
-      contacted: v.boolean(),
-      evaluation: v.object({
-        status: v.union(
-          v.literal("waiting"),
-          v.literal("needs_clarification"),
-          v.literal("eligible"),
-          v.literal("ineligible"),
+      contacted: v.optional(v.boolean()),
+      communication: v.optional(
+        v.union(
+          v.literal("none"),
+          v.literal("pending"),
+          v.literal("attempted"),
+          v.literal("unverified"),
+          v.literal("verified"),
         ),
-        missing: v.array(v.string()),
-        conflicts: v.array(v.string()),
-        reasons: v.array(v.string()),
-        totalCents: nullableNumber,
-        quote,
-        currentEvidenceIds: v.array(v.string()),
-        supersededEvidenceIds: v.array(v.string()),
-        supersededClaims: v.optional(
-          v.array(
-            v.object({ evidenceId: v.string(), fields: v.array(v.string()) }),
-          ),
-        ),
-      }),
+      ),
+      evaluation,
     }),
   ),
   evidence: v.array(
@@ -107,6 +146,7 @@ export const mission = v.object({
       observedAt: v.number(),
       text: v.string(),
       claims: quote,
+      provenance: v.optional(provenance),
     }),
   ),
   effects: v.array(effect),
@@ -116,9 +156,20 @@ export const mission = v.object({
       version: v.number(),
       evidenceVersion: v.number(),
       totalCents: v.number(),
+      orderQuantity: v.optional(v.number()),
       rationale: v.string(),
     }),
     v.null(),
+  ),
+  ranking: v.optional(ranking),
+  noViableOption: v.optional(
+    v.union(
+      v.object({
+        evidenceVersion: v.number(),
+        reason: v.string(),
+      }),
+      v.null(),
+    ),
   ),
   approvals: v.array(
     v.object({
