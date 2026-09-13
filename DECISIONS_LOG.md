@@ -195,3 +195,13 @@ This repository is the implementation-era source of truth from 14 September 2026
 
 **Convex:** team `dropandreset-main`, project `multi-app-hackathon`. Development deployment `acrobatic-swan-765` is the only environment allowed for normal coding. Preview is not created. Production `proficient-panda-882` exists and is write-protected / out of scope. Identifiers and pinning rules live in `docs/ENVIRONMENTS.md`.
 
+---
+
+## D024 — Product name locked: Somebody
+
+**Decision:** The product is **Somebody** — *"Somebody has to do it. Now Somebody can."* Supersedes D021; the working name Trust Issues is retired.
+
+**Positioning:** Somebody is the autonomous AI coworker that owns messy operational jobs nobody owns. Procurement is the first demonstrated job, not the category. Reliability is the mechanism that makes Somebody dependable, not the headline.
+
+**Consequence:** User-facing UI follows `DESIGN.md` (voice, vocabulary, colour/state semantics, mascot slot, operator layer). Architecture terms (Reliability Core, Role Adapter, Core Worker Contract) stay in architecture docs and code, not primary product UI. No architecture or scope change.
+

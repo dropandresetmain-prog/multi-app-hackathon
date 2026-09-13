@@ -121,6 +121,7 @@ Copy `.env.example` to `.env.local` and fill values locally. Before any Convex w
 - `ARCHITECTURE.md` — implementation architecture and invariants
 - `DEMO_SLICE.md` — exact demo direction and acceptance behavior
 - `DECISIONS_LOG.md` — settled decisions that should not drift
+- `DESIGN.md` — Somebody identity, voice and UI design system
 - `INTEGRATION_PREFLIGHT.md` — integration readiness and remaining build-time proofs
 - `docs/ENVIRONMENTS.md` — Convex project/deployment identifiers and write policy
 - `docs/work/ACTIVE_TASK.md` — current checkpoint, checklist, and next action

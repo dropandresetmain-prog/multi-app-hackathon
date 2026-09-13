@@ -14,6 +14,7 @@ Use these as the current source of truth:
 6. `INTEGRATION_PREFLIGHT.md`
 7. `docs/ENVIRONMENTS.md`
 8. `docs/work/ACTIVE_TASK.md`
+9. `DESIGN.md` — product identity, voice and UI design system; follow it for any user-facing UI
 
 Do not rely on older pre-hackathon chat context when these files disagree.
 
