@@ -13,7 +13,10 @@ import type * as effectAdapter from "../effectAdapter.js";
 import type * as environment from "../environment.js";
 import type * as gateway from "../gateway.js";
 import type * as health from "../health.js";
+import type * as http from "../http.js";
 import type * as missions from "../missions.js";
+import type * as unipile from "../unipile.js";
+import type * as unipileStore from "../unipileStore.js";
 import type * as validators from "../validators.js";
 
 import type {
@@ -28,7 +31,10 @@ declare const fullApi: ApiFromModules<{
   environment: typeof environment;
   gateway: typeof gateway;
   health: typeof health;
+  http: typeof http;
   missions: typeof missions;
+  unipile: typeof unipile;
+  unipileStore: typeof unipileStore;
   validators: typeof validators;
 }>;
 

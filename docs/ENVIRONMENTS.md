@@ -37,6 +37,10 @@ Verified 2026-09-14 against Convex tooling: Development `acrobatic-swan-765` and
 | `AI_PROVIDER=openrouter`, `AI_MODEL=openrouter/free` | `acrobatic-swan-765` | User-selected free model router. |
 | `OPENROUTER_API_KEY` | `acrobatic-swan-765` | Existing provider credential; value is never recorded here. |
 | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` / `QBO_REFRESH_TOKEN` / `QBO_REALM_ID` | local `.env.local` and optionally `acrobatic-swan-765` when the PO adapter is centrally wired | QuickBooks Online Sandbox only. Never set production Intuit credentials. |
+| `UNIPILE_API_KEY` / `UNIPILE_DSN` | `acrobatic-swan-765` + local | Unipile WhatsApp/Instagram API (values never recorded here). |
+| `UNIPILE_WEBHOOK_SECRET` | `acrobatic-swan-765` | Auth for `/webhooks/unipile` (min 16 chars). |
+| `UNIPILE_BINDINGS_JSON` | `acrobatic-swan-765` + local | Opaque endpointRef → account/chat/user bindings JSON. |
+| `SOMEBODY_TIME_ZONE` | `acrobatic-swan-765` + local | IANA zone for weekday delivery phrasing (default `Asia/Singapore`). |
 
 ## Pinning the target
 
