@@ -97,9 +97,7 @@ async function main() {
       pending.vendors.find((v) => v.id === "studio")!.communication,
       "verified",
     );
-    // Public catalogue pages leave required quote fields absent by design.
-    // Shared ranking treats that as incomplete and blocks recommend — out of
-    // scope to change on this branch. Outreach vendors still use fixtures.
+    // Incomplete public Web evidence no longer blocks comparison once sourced.
     for (const vendorId of ["studio", "social", "express"])
       await send({
         type: "ingest_fixture_observation",
@@ -131,16 +129,21 @@ async function main() {
       stage: "clarification",
     });
     pending = await read();
-    assert.equal(pending.ranking.incompleteVendorIds.includes("catalogue"), true);
-    assert.equal(pending.vendors.find((v) => v.id === "express")!.evaluation.status, "eligible");
-    await assert.rejects(
-      send({
-        type: "recommend",
-        vendorId: "express",
-        rationale: "Blocked while public web catalogue still needs clarification",
-      }),
+    assert.equal(pending.ranking.incompleteVendorIds.includes("catalogue"), false);
+    assert.equal(
+      pending.vendors.find((v) => v.id === "catalogue")!.evaluation.status,
+      "needs_clarification",
     );
+    assert.equal(pending.vendors.find((v) => v.id === "express")!.evaluation.status, "eligible");
+    assert.equal(pending.ranking.topVendorId, "express");
+    await send({
+      type: "recommend",
+      vendorId: "express",
+      rationale: "Lowest complete eligible landed cost while catalogue stays incomplete",
+    });
     pending = await read();
+    assert.equal(pending.state, "awaiting_approval");
+    assert.equal(pending.recommendation?.vendorId, "express");
     console.log(
       JSON.stringify({
         result: "PASS_WEB_CATALOGUE_SEAM",
@@ -150,8 +153,9 @@ async function main() {
         catalogueMissing: pending.vendors.find((v) => v.id === "catalogue")!
           .evaluation.missing,
         webUrl: webEvidence[0]?.provenance.url,
+        recommendation: pending.recommendation?.vendorId,
         deployment: "acrobatic-swan-765",
-        note: "Full multi-vendor recommend/PO path deferred: public web evidence is intentionally incomplete.",
+        note: "Incomplete sourced Web catalogue no longer blocks recommending a complete contactable supplier.",
       }),
     );
     return;

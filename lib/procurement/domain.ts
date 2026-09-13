@@ -204,10 +204,16 @@ export function evaluate(m: Mission, vendorId: string): Evaluation {
   };
 }
 export function rankSuppliers(m: Mission): SupplierRanking {
-  const incomplete = m.vendors.filter(
+  const blockingIncomplete = m.vendors.filter((v) =>
+    blocksRecommendation(m, v),
+  );
+  // Public web sources may remain needs_clarification after real evidence without
+  // proving every supplier is ineligible — those must not flip no-viable-option.
+  const unresolvedWebIncomplete = m.vendors.filter(
     (v) =>
-      v.evaluation.status === "waiting" ||
-      v.evaluation.status === "needs_clarification",
+      v.channel === "Web" &&
+      v.evaluation.status === "needs_clarification" &&
+      hasRealWebEvidence(m, v.id),
   );
   const eligible = m.vendors.filter(
     (v) => v.evaluation.status === "eligible" && v.evaluation.totalCents !== null,
@@ -222,9 +228,34 @@ export function rankSuppliers(m: Mission): SupplierRanking {
     rankedVendorIds: ranked.map((v) => v.id),
     topVendorId: ranked[0]?.id ?? null,
     noViableOption:
-      m.vendors.length > 0 && incomplete.length === 0 && ranked.length === 0,
-    incompleteVendorIds: incomplete.map((v) => v.id),
+      m.vendors.length > 0 &&
+      blockingIncomplete.length === 0 &&
+      unresolvedWebIncomplete.length === 0 &&
+      ranked.length === 0,
+    // Blocking incompletes only: Web with real but non-decision-ready evidence
+    // stays visible via evaluation.status and does not appear here.
+    incompleteVendorIds: blockingIncomplete.map((v) => v.id),
   };
+}
+
+function hasRealWebEvidence(m: Mission, vendorId: string) {
+  return m.evidence.some(
+    (item) =>
+      item.vendorId === vendorId && item.provenance.provider === "web",
+  );
+}
+
+/** Vendors that must be resolved before recommend / no-viable-option. */
+function blocksRecommendation(m: Mission, v: Vendor) {
+  const status = v.evaluation.status;
+  if (status !== "waiting" && status !== "needs_clarification") return false;
+  if (v.channel === "Web") {
+    // Sourced public catalogue that still lacks fields does not stall comparison.
+    if (status === "needs_clarification" && hasRealWebEvidence(m, v.id))
+      return false;
+    return true;
+  }
+  return true;
 }
 export function refreshDerived(m: Mission) {
   m.vendors.forEach((v) => {
