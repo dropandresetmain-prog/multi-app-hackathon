@@ -40,6 +40,8 @@ Without Unipile config, Development keeps the fixture transport for those channe
    - bounded natural-language heuristics (amounts, stock, branding, weekday delivery relative to mission deadline).
 3. Messages with no extractable quote claims are still ingested with empty `claims` and the raw text preserved for agent visibility — nothing is fabricated.
 
+Weekday/time phrases ("Thursday morning") resolve in `SOMEBODY_TIME_ZONE` (default `Asia/Singapore`), not UTC wall clock. Provider message timestamps and chronology are unchanged.
+
 Endpoint (after a deliberate Development deploy of this branch):
 
 ```text

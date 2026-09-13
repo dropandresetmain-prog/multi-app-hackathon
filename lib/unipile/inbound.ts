@@ -181,6 +181,7 @@ export function decideInbound(args: {
   const normalized = normalizeSupplierClaims(args.event.message ?? "", {
     referenceAt: correlated.observedAt,
     deadlineAt: args.extractionContext?.deadlineAt,
+    timeZone: args.extractionContext?.timeZone,
   });
   return withExtractedClaims(
     { ...correlated, text: normalized.text },

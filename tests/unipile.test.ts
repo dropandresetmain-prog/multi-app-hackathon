@@ -18,8 +18,10 @@ import {
   parseBindingsJson,
   planOutbound,
   readBackMatches,
+  resolveTimeZone,
   resolveWeekdayDeliveryAt,
   sourceRevision,
+  zonedWallTimeToUtc,
   type UnipileBinding,
   type UnipileWebhookEvent,
 } from "../lib/unipile";
@@ -517,6 +519,7 @@ test("natural language extracts price + delivery + stock + branding", () => {
   const claims = extractNaturalLanguageClaims(text, {
     referenceAt: now,
     deadlineAt: m.requirements.deadlineAt,
+    timeZone: "Asia/Singapore",
   });
   assert.equal(claims.unitCents, 1800);
   assert.equal(claims.deliveryCents, 1500);
@@ -524,15 +527,86 @@ test("natural language extracts price + delivery + stock + branding", () => {
   assert.equal(claims.branded, true);
   assert.equal(
     claims.deliveryAt,
-    resolveWeekdayDeliveryAt("thursday", {
-      referenceAt: now,
-      deadlineAt: m.requirements.deadlineAt,
-    }, "morning"),
+    resolveWeekdayDeliveryAt(
+      "thursday",
+      {
+        referenceAt: now,
+        deadlineAt: m.requirements.deadlineAt,
+        timeZone: "Asia/Singapore",
+      },
+      "morning",
+    ),
   );
   assert.equal(claims.setupCents, undefined);
   assert.equal(claims.taxCents, undefined);
   assert.equal(claims.currency, undefined);
   assert.equal(claims.moq, undefined);
+});
+
+test("Thursday morning resolves in Asia/Singapore not UTC wall clock", () => {
+  const m = sourcingMission();
+  const ctx = {
+    referenceAt: now,
+    deadlineAt: m.requirements.deadlineAt!,
+    timeZone: "Asia/Singapore",
+  };
+  const morning = resolveWeekdayDeliveryAt("thursday", ctx, "morning");
+  const afternoon = resolveWeekdayDeliveryAt("thursday", ctx, "afternoon");
+  assert.ok(morning);
+  assert.ok(afternoon);
+  // 09:00 SGT = 01:00 UTC; 15:00 SGT = 07:00 UTC
+  assert.equal(new Date(morning!).getUTCHours(), 1);
+  assert.equal(new Date(afternoon!).getUTCHours(), 7);
+  assert.equal(new Date(morning!).getUTCMinutes(), 0);
+  assert.ok(afternoon! > morning!);
+
+  const asSingapore = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Singapore",
+    weekday: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(morning!));
+  const weekday = asSingapore.find((p) => p.type === "weekday")?.value;
+  const hour = asSingapore.find((p) => p.type === "hour")?.value;
+  assert.equal(weekday, "Thursday");
+  assert.equal(hour, "09");
+
+  // Explicit civil time round-trip sanity.
+  const partsDay = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(morning!));
+  const [y, mo, d] = partsDay.split("-").map(Number);
+  assert.equal(
+    morning,
+    zonedWallTimeToUtc(y!, mo!, d!, 9, 0, "Asia/Singapore"),
+  );
+});
+
+test("Friday correction remains later than Thursday in Asia/Singapore", () => {
+  const m = sourcingMission();
+  const ctx = {
+    referenceAt: now,
+    deadlineAt: m.requirements.deadlineAt!,
+    timeZone: "Asia/Singapore",
+  };
+  const thursday = resolveWeekdayDeliveryAt("thursday", ctx, "morning");
+  const friday = resolveWeekdayDeliveryAt("friday", ctx, "unspecified");
+  assert.ok(thursday);
+  assert.ok(friday);
+  assert.ok(friday! > thursday!);
+});
+
+test("invalid SOMEBODY_TIME_ZONE falls back to Asia/Singapore", () => {
+  assert.equal(resolveTimeZone("Not/AZone", {}), "Asia/Singapore");
+  assert.equal(resolveTimeZone(undefined, {}), "Asia/Singapore");
+  assert.equal(
+    resolveTimeZone(undefined, { SOMEBODY_TIME_ZONE: "Asia/Singapore" }),
+    "Asia/Singapore",
+  );
 });
 
 test("natural language incomplete quote omits unstated fields", () => {
@@ -586,13 +660,14 @@ test("natural language delivery correction supersedes earlier day", () => {
   assert.ok(correction.revision > first.revision);
 });
 
-test("messy WhatsApp-style shorthand still extracts supported claims", () => {
+test("messy WhatsApp-style shorthand still works in Asia/Singapore", () => {
   const m = sourcingMission();
   const claims = extractNaturalLanguageClaims(
     "18ea logo ok deliv $15 stk 40 thu am",
     {
       referenceAt: now,
       deadlineAt: m.requirements.deadlineAt,
+      timeZone: "Asia/Singapore",
     },
   );
   assert.equal(claims.unitCents, 1800);
@@ -600,6 +675,7 @@ test("messy WhatsApp-style shorthand still extracts supported claims", () => {
   assert.equal(claims.stock, 40);
   assert.equal(claims.branded, true);
   assert.ok(claims.deliveryAt);
+  assert.equal(new Date(claims.deliveryAt!).getUTCHours(), 1);
 });
 
 test("messages with no supported quote claims ingest empty claims without fabrication", () => {

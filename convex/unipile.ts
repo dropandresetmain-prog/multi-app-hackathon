@@ -8,6 +8,7 @@ import {
   evidenceFromInbound,
   loadBindings,
   normalizeSupplierClaimsLive,
+  resolveTimeZone,
   withExtractedClaims,
 } from "../lib/unipile";
 import type { UnipileWebhookEvent } from "../lib/unipile";
@@ -110,6 +111,7 @@ export const handleWebhook = internalAction({
     const extracted = await normalizeSupplierClaimsLive(event.message ?? "", {
       referenceAt: correlated.observedAt,
       deadlineAt,
+      timeZone: resolveTimeZone(process.env.SOMEBODY_TIME_ZONE),
     });
     const decision = withExtractedClaims(
       { ...correlated, text: extracted.text },

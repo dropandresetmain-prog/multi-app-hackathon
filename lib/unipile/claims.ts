@@ -20,6 +20,8 @@ export type ClaimExtractionContext = {
   referenceAt: number;
   /** Mission hard deadline when known — used only to resolve weekday delivery phrasing. */
   deadlineAt?: number | null;
+  /** IANA timezone for local morning/afternoon delivery phrasing (e.g. Asia/Singapore). */
+  timeZone?: string;
 };
 
 export type ClaimExtractionPath = "trailer" | "natural_language" | "model" | "none";
@@ -30,6 +32,132 @@ export type ClaimExtractionResult = {
   /** Raw supplier text with optional trailer stripped. */
   text: string;
 };
+
+/** Development/demo default for Somebody procurement wall-clock phrasing. */
+export const DEFAULT_PROCUREMENT_TIME_ZONE = "Asia/Singapore";
+
+/**
+ * Resolve an IANA timezone. Invalid/unknown values fall back to Asia/Singapore —
+ * never to the host's implicit UTC/local zone.
+ */
+export function resolveTimeZone(
+  value?: string | null,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const candidate =
+    value?.trim() ||
+    env.SOMEBODY_TIME_ZONE?.trim() ||
+    DEFAULT_PROCUREMENT_TIME_ZONE;
+  if (isValidTimeZone(candidate)) return candidate;
+  if (
+    candidate !== DEFAULT_PROCUREMENT_TIME_ZONE &&
+    isValidTimeZone(DEFAULT_PROCUREMENT_TIME_ZONE)
+  )
+    return DEFAULT_PROCUREMENT_TIME_ZONE;
+  throw new Error(
+    `Invalid procurement timezone "${candidate}"; set SOMEBODY_TIME_ZONE to a valid IANA name (e.g. Asia/Singapore)`,
+  );
+}
+
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type ZonedParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  weekday: number;
+};
+
+const WEEKDAY_SHORT: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+function readZonedParts(ms: number, timeZone: string): ZonedParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(ms));
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const weekday = WEEKDAY_SHORT[get("weekday")];
+  if (weekday === undefined) throw new Error("Unable to read zoned weekday");
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+    second: Number(get("second")),
+    weekday,
+  };
+}
+
+/** Convert a civil wall time in `timeZone` to an epoch millisecond instant. */
+export function zonedWallTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+): number {
+  let utc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  for (let i = 0; i < 5; i++) {
+    const local = readZonedParts(utc, timeZone);
+    const asUtcLike = Date.UTC(
+      local.year,
+      local.month - 1,
+      local.day,
+      local.hour,
+      local.minute,
+      local.second,
+    );
+    const wanted = Date.UTC(year, month - 1, day, hour, minute, 0);
+    const delta = wanted - asUtcLike;
+    if (delta === 0) break;
+    utc += delta;
+  }
+  return utc;
+}
+
+function addLocalDays(
+  parts: Pick<ZonedParts, "year" | "month" | "day">,
+  deltaDays: number,
+  timeZone: string,
+): Pick<ZonedParts, "year" | "month" | "day"> {
+  const noon = zonedWallTimeToUtc(
+    parts.year,
+    parts.month,
+    parts.day,
+    12,
+    0,
+    timeZone,
+  );
+  return readZonedParts(noon + deltaDays * 86_400_000, timeZone);
+}
 
 /**
  * Deterministic test/debug fast-path. Optional in live traffic — not required.
@@ -103,7 +231,8 @@ const WEEKDAYS: Record<string, number> = {
 
 /**
  * Resolve a weekday phrase onto the calendar week around the mission deadline
- * (fallback: message reference time). Morning → 09:00 UTC that day.
+ * (fallback: message reference time) in the configured procurement timezone.
+ * Morning → 09:00 local; afternoon → 15:00 local; unspecified → 12:00 local.
  */
 export function resolveWeekdayDeliveryAt(
   weekday: string,
@@ -112,26 +241,18 @@ export function resolveWeekdayDeliveryAt(
 ): number | null {
   const target = WEEKDAYS[weekday.toLowerCase()];
   if (target === undefined) return null;
+  const timeZone = resolveTimeZone(context.timeZone);
   const anchor = context.deadlineAt ?? context.referenceAt;
-  const base = new Date(anchor);
-  const day = base.getUTCDay();
-  let delta = target - day;
+  const local = readZonedParts(anchor, timeZone);
+  let delta = target - local.weekday;
   // Prefer the occurrence in the same week as the deadline; if the named day
   // is before the anchor weekday by more than 3 days, use the next week.
   if (delta < -3) delta += 7;
   if (delta > 3 && context.deadlineAt == null) delta -= 7;
-  const at = new Date(
-    Date.UTC(
-      base.getUTCFullYear(),
-      base.getUTCMonth(),
-      base.getUTCDate() + delta,
-      timeOfDay === "morning" ? 9 : timeOfDay === "afternoon" ? 15 : 12,
-      0,
-      0,
-      0,
-    ),
-  );
-  return at.getTime();
+  const day = addLocalDays(local, delta, timeZone);
+  const hour =
+    timeOfDay === "morning" ? 9 : timeOfDay === "afternoon" ? 15 : 12;
+  return zonedWallTimeToUtc(day.year, day.month, day.day, hour, 0, timeZone);
 }
 
 /**
@@ -288,6 +409,10 @@ export function normalizeSupplierClaims(
   text: string,
   context: ClaimExtractionContext,
 ): ClaimExtractionResult {
+  const scoped: ClaimExtractionContext = {
+    ...context,
+    timeZone: resolveTimeZone(context.timeZone),
+  };
   const raw = text.trim();
   const stripped = stripClaimsTrailer(raw);
   const display = (stripped || raw).slice(0, 1500);
@@ -298,7 +423,7 @@ export function normalizeSupplierClaims(
   } catch {
     // Invalid trailer falls through to natural language rather than rejecting the message.
   }
-  const claims = extractNaturalLanguageClaims(display, context);
+  const claims = extractNaturalLanguageClaims(display, scoped);
   return {
     claims,
     path: Object.keys(claims).length ? "natural_language" : "none",
