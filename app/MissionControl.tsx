@@ -4,7 +4,9 @@ import {
   Component,
   type FormEvent,
   type ReactNode,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useQuery } from "convex/react";
@@ -18,9 +20,15 @@ import type {
   Quote,
   Vendor,
 } from "@/lib/procurement/types";
+import {
+  buildConversation,
+  conversationStatusLabel,
+  type ConversationMessage,
+} from "./conversation";
+import { speakText, stopSpeaking, useSpeechToText } from "./useSpeechToText";
 
 const DEFAULT_REQUEST =
-  "Good news, the sponsor approved some budget for gifts for Thursday. Around 25 people, maybe $30 each max. Can you sort something out?";
+  "Sponsor finally approved $500 for gifts for Thursday. About 25 people. Can you sort out something useful and branded? Maybe tumblers?";
 const money = new Intl.NumberFormat("en-SG", {
   style: "currency",
   currency: "SGD",
@@ -60,7 +68,11 @@ type IconName =
   | "approval"
   | "proof"
   | "clock"
-  | "arrow";
+  | "arrow"
+  | "mic"
+  | "stop"
+  | "speaker"
+  | "send";
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
     spark: (
@@ -104,6 +116,20 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
       </>
     ),
     arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
+    mic: (
+      <>
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+      </>
+    ),
+    stop: <rect x="7" y="7" width="10" height="10" rx="1.5" />,
+    speaker: (
+      <>
+        <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+        <path d="M16 9a4 4 0 0 1 0 6M18.5 7a7 7 0 0 1 0 10" />
+      </>
+    ),
+    send: <path d="M4 12h14m-5-5 5 5-5 5" />,
   };
   return (
     <svg
@@ -168,7 +194,7 @@ class MissionErrorBoundary extends Component<
         <main className="state-page">
           <div className="state-card error-card">
             <span className="eyebrow">Connection interrupted</span>
-            <h1>Mission Control could not load.</h1>
+            <h1>Somebody could not load.</h1>
             <p>
               {this.state.error.message ||
                 "Convex returned an unexpected error."}
@@ -243,7 +269,7 @@ function MissionControlContent() {
         if (!resumed.ok)
           setNotice({
             kind: "ok",
-            text: "Decision saved. Use Resume agent to continue from the persisted state.",
+            text: "Decision saved. Somebody will continue from persisted state when the agent is available.",
           });
       }
     } catch (error) {
@@ -283,14 +309,98 @@ function LoadingState() {
         <div className="brand-seal">
           <Icon name="spark" size={22} />
         </div>
-        <span className="eyebrow">Mission Control</span>
-        <h1>Connecting to the worker.</h1>
-        <p>Reading the latest procurement state from Convex Development…</p>
+        <span className="eyebrow">Somebody</span>
+        <h1>Connecting…</h1>
+        <p>Reading the latest mission state from Convex Development.</p>
         <div className="loading-line">
           <span />
         </div>
       </div>
     </main>
+  );
+}
+
+function RequestComposer({
+  value,
+  onChange,
+  onSubmit,
+  pending,
+  submitLabel,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  pending: string | null;
+  submitLabel: string;
+  disabled?: boolean;
+}) {
+  const speech = useSpeechToText({
+    onFinal: (transcript) => {
+      onChange(value.trim() ? `${value.trim()} ${transcript}` : transcript);
+    },
+  });
+  useEffect(() => () => stopSpeaking(), []);
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!value.trim() || disabled || pending) return;
+    onSubmit();
+  }
+  return (
+    <form className="composer" onSubmit={submit}>
+      <label className="sr-only" htmlFor="somebody-request">
+        What needs handling?
+      </label>
+      <textarea
+        id="somebody-request"
+        value={
+          speech.listening && speech.interim
+            ? `${value}${value ? " " : ""}${speech.interim}`
+            : value
+        }
+        onChange={(event) => onChange(event.target.value)}
+        rows={3}
+        placeholder="Describe the work Somebody should take on…"
+        required
+        disabled={Boolean(disabled) || Boolean(pending)}
+      />
+      <div className="composer-footer">
+        <div className="composer-tools">
+          {speech.supported ? (
+            <button
+              type="button"
+              className={`button tertiary mic-button ${speech.listening ? "listening" : ""}`}
+              disabled={Boolean(pending)}
+              onClick={() => speech.toggle()}
+              aria-pressed={speech.listening}
+              aria-label={
+                speech.listening
+                  ? "Stop voice input"
+                  : "Dictate request with microphone"
+              }
+              title={
+                speech.listening ? "Stop listening" : "Dictate with microphone"
+              }
+            >
+              <Icon name={speech.listening ? "stop" : "mic"} size={16} />
+              {speech.listening ? "Listening…" : "Voice"}
+            </button>
+          ) : (
+            <span className="composer-hint">
+              Voice input needs Chrome or Edge
+            </span>
+          )}
+          {speech.error && <span className="composer-error">{speech.error}</span>}
+        </div>
+        <button
+          className="button primary"
+          disabled={Boolean(pending) || Boolean(disabled) || !value.trim()}
+        >
+          {pending ? "Sending…" : submitLabel}
+          <Icon name="send" size={16} />
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -306,59 +416,44 @@ function EmptyState({
   deployment: string;
 }) {
   const [request, setRequest] = useState(DEFAULT_REQUEST);
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    void onCreate(
-      { type: "create", key: crypto.randomUUID(), request },
-      "create mission",
-    );
-  }
   return (
-    <main className="empty-page">
+    <main className="empty-page somebody-home">
       <header className="empty-header">
         <div className="wordmark">
           <span className="brand-seal">
             <Icon name="spark" />
           </span>
-          <span>Trust Issues</span>
+          <div className="wordmark-copy">
+            <span>Somebody</span>
+            <small>For work that nobody has to do.</small>
+          </div>
         </div>
         <span className="environment-pill">
           <i /> Development · {deployment}
         </span>
       </header>
-      <section className="delegate-card">
+      <section className="delegate-card chat-start">
         <div className="delegate-copy">
-          <span className="eyebrow">Your procurement colleague</span>
-          <h1>Hand over the messy job.</h1>
+          <span className="eyebrow">Delegate</span>
+          <h1>Somebody’s gotta do it. Now Somebody can.</h1>
           <p>
-            Give the worker the outcome you need. It will structure the brief,
-            reconcile vendor evidence, and return when your authority is
-            required.
+            Describe the messy job in plain language. Somebody works from
+            persisted mission state — not a throwaway chat transcript.
           </p>
         </div>
-        <form onSubmit={submit}>
-          <label htmlFor="mission-request">What needs handling?</label>
-          <textarea
-            id="mission-request"
-            value={request}
-            onChange={(event) => setRequest(event.target.value)}
-            rows={6}
-            required
-          />
-          <div className="form-footer">
-            <span>
-              Fixture-backed workspace · no external messages will be sent
-            </span>
-            <button
-              className="button primary large"
-              disabled={Boolean(pending) || !request.trim()}
-            >
-              {pending ? "Creating…" : "Delegate mission"}
-              <Icon name="arrow" />
-            </button>
-          </div>
-          {notice && <Notice notice={notice} />}
-        </form>
+        <RequestComposer
+          value={request}
+          onChange={setRequest}
+          pending={pending}
+          submitLabel="Hand it to Somebody"
+          onSubmit={() =>
+            void onCreate(
+              { type: "create", key: crypto.randomUUID(), request },
+              "create mission",
+            )
+          }
+        />
+        {notice && <Notice notice={notice} />}
       </section>
     </main>
   );
@@ -378,9 +473,7 @@ function Workspace({
   const { mission } = view;
   const [newMissionOpen, setNewMissionOpen] = useState(false);
   const [newRequest, setNewRequest] = useState(DEFAULT_REQUEST);
-  const viable = mission.vendors.filter(
-    (vendor) => vendor.evaluation.status === "eligible",
-  ).length;
+  const messages = useMemo(() => buildConversation(view), [view]);
   const currentStep = ["clarifying", "sourcing"].includes(mission.state)
     ? 1
     : mission.state === "awaiting_approval"
@@ -390,14 +483,20 @@ function Workspace({
         : mission.state === "complete"
           ? 5
           : 1;
+  const needsRequirements = Object.values(mission.requirements).some(
+    (value) => value == null,
+  );
   return (
-    <div className="app-shell">
+    <div className="app-shell somebody-shell">
       <header className="topbar">
         <div className="wordmark">
           <span className="brand-seal">
             <Icon name="spark" />
           </span>
-          <span>Trust Issues</span>
+          <div className="wordmark-copy">
+            <span>Somebody</span>
+            <small>For work that nobody has to do.</small>
+          </div>
         </div>
         <div className="topbar-right">
           <button
@@ -405,7 +504,7 @@ function Workspace({
             disabled={Boolean(pending)}
             onClick={() => setNewMissionOpen(true)}
           >
-            + New mission
+            + New request
           </button>
           <span className={`ai-pill ${view.liveAiEnabled ? "on" : "off"}`}>
             <i /> {view.liveAiEnabled ? "Live AI enabled" : "Fixture worker"}
@@ -415,123 +514,97 @@ function Workspace({
           </span>
         </div>
       </header>
-      <div className="workspace-grid">
-        <aside className="sidebar">
-          <div className="sidebar-title">Mission</div>
-          <nav aria-label="Mission sections">
-            <a className="nav-item active" href="#brief">
-              <Icon name="brief" /> Brief
-            </a>
-            <a className="nav-item" href="#vendors">
-              <Icon name="vendors" /> Vendors{" "}
-              <span>{mission.vendors.length}</span>
-            </a>
-            <a className="nav-item" href="#comparison">
-              <Icon name="compare" /> Comparison <span>{viable}</span>
-            </a>
-            <a className="nav-item" href="#approval">
-              <Icon name="approval" /> Approval
-            </a>
-            <a className="nav-item" href="#proof">
-              <Icon name="proof" /> Effect proof
-            </a>
-          </nav>
-          <div className="sidebar-foot">
-            <span>Source of truth</span>
-            <strong>Convex Development</strong>
-            <small>{mission.key.slice(0, 12)}</small>
-          </div>
-        </aside>
-        <main className="mission-main">
-          <section className="mission-heading" id="brief">
+      <div className="somebody-layout">
+        <section className="conversation-panel" aria-label="Conversation">
+          <div className="conversation-header">
             <div>
-              <div className="heading-meta">
-                <span className={`state-dot ${mission.state}`} />{" "}
-                {titleCase(mission.state)} · Updated{" "}
-                {formatTime(mission.updatedAt)}
-              </div>
+              <span className="eyebrow">Conversation</span>
               <h1>{mission.title}</h1>
-              <p className="mission-request">“{mission.request}”</p>
+              <p className="conversation-status">
+                <span className={`state-dot ${mission.state}`} />
+                {conversationStatusLabel(mission)} · Updated{" "}
+                {formatTime(mission.updatedAt)}
+              </p>
             </div>
             <StateStepper step={currentStep} />
-          </section>
+          </div>
           {notice && <Notice notice={notice} />}
-          <section className="now-card">
-            <div className="agent-orb">
-              <Icon name="spark" size={20} />
-            </div>
-            <div className="now-copy">
-              <span className="eyebrow">Procurement Agent · Working note</span>
-              <h2>{mission.activity}</h2>
-              {mission.run && (
-                <p>
-                  {mission.run.summary} · {mission.run.toolCalls} tool{" "}
-                  {mission.run.toolCalls === 1 ? "call" : "calls"}
-                </p>
-              )}
-            </div>
-            <div className="now-state">
-              <span
-                className={
-                  mission.run?.status === "running" ? "pulse" : "still"
-                }
-              />
-              {mission.run?.status === "running"
-                ? "Working now"
-                : "State persisted"}
-            </div>
-          </section>
-          <AgentControls
+          <ConversationThread
+            messages={messages}
             mission={mission}
-            liveAiEnabled={view.liveAiEnabled}
+            needsRequirements={needsRequirements}
             pending={pending}
             send={send}
           />
-          <div className="content-columns">
-            <div className="primary-column">
-              <BriefCard mission={mission} send={send} pending={pending} />
-              <VendorsSection mission={mission} />
-              <Comparison mission={mission} />
-              <ApprovalCard mission={mission} send={send} pending={pending} />
-              <Effects mission={mission} />
-              <DevelopmentControls
-                mission={mission}
-                liveAiEnabled={view.liveAiEnabled}
-                send={send}
-                pending={pending}
-              />
-            </div>
-            <aside className="activity-panel">
-              <div className="section-heading compact">
-                <div>
-                  <span className="eyebrow">Audit trail</span>
-                  <h2>What changed</h2>
+          <div className="conversation-composer-slot">
+            {mission.state === "clarifying" && needsRequirements ? (
+              <p className="composer-locked">
+                Answer Somebody’s clarification in the thread above to resume.
+              </p>
+            ) : mission.state === "awaiting_approval" &&
+              mission.recommendation &&
+              !mission.approvals.some(
+                (item) =>
+                  item.recommendationVersion === mission.recommendation?.version,
+              ) ? (
+              <p className="composer-locked">
+                Approve or reject the recommendation in the thread to continue.
+              </p>
+            ) : mission.state === "complete" ? (
+              <p className="composer-locked">
+                This mission is complete. Start a new request when you need
+                Somebody again.
+              </p>
+            ) : (
+              <div className="working-strip">
+                <div className="agent-orb">
+                  <Icon name="spark" size={18} />
                 </div>
-                <span className="event-count">{view.events.length}</span>
+                <div>
+                  <strong>{mission.activity}</strong>
+                  {mission.run && (
+                    <span>
+                      {mission.run.summary} · {mission.run.toolCalls} tool{" "}
+                      {mission.run.toolCalls === 1 ? "call" : "calls"}
+                    </span>
+                  )}
+                </div>
+                <span
+                  className={
+                    mission.run?.status === "running" ? "pulse" : "still"
+                  }
+                />
               </div>
-              <div className="timeline">
-                {view.events.length === 0 ? (
-                  <p className="muted">No activity recorded yet.</p>
-                ) : (
-                  view.events.slice(0, 16).map((event, index) => (
-                    <div
-                      className={`timeline-item ${event.kind}`}
-                      key={`${event.at}-${index}`}
-                    >
-                      <span className="timeline-pin" />
-                      <div>
-                        <span>
-                          {titleCase(event.kind)} · {formatTime(event.at)}
-                        </span>
-                        <p>{event.text}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </aside>
+            )}
           </div>
-        </main>
+        </section>
+        <aside className="ops-panel" aria-label="Mission Control">
+          <div className="ops-panel-header">
+            <span className="eyebrow">Mission Control</span>
+            <h2>Operational truth</h2>
+            <p>
+              Persisted Convex state. Somebody does not invent numbers in the
+              browser.
+            </p>
+          </div>
+          <BriefCard mission={mission} compact />
+          <VendorsSection mission={mission} />
+          <Comparison mission={mission} />
+          <ApprovalCard
+            mission={mission}
+            send={send}
+            pending={pending}
+            compact
+          />
+          <Effects mission={mission} />
+          <ActivityTrail events={view.events} />
+          <DevelopmentControls
+            mission={mission}
+            liveAiEnabled={view.liveAiEnabled}
+            send={send}
+            pending={pending}
+          />
+        </aside>
       </div>
       {newMissionOpen && (
         <div
@@ -539,34 +612,31 @@ function Workspace({
           role="presentation"
           onMouseDown={() => setNewMissionOpen(false)}
         >
-          <form
+          <div
             className="new-mission-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="new-mission-title"
             onMouseDown={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send(
-                {
-                  type: "create",
-                  key: crypto.randomUUID(),
-                  request: newRequest,
-                },
-                "create new mission",
-              );
-              setNewMissionOpen(false);
-            }}
           >
-            <span className="eyebrow">Start another fixture</span>
-            <h2 id="new-mission-title">Delegate a new mission</h2>
-            <label htmlFor="new-mission-request">Request</label>
-            <textarea
-              id="new-mission-request"
-              rows={5}
+            <span className="eyebrow">New request</span>
+            <h2 id="new-mission-title">Hand another job to Somebody</h2>
+            <RequestComposer
               value={newRequest}
-              onChange={(event) => setNewRequest(event.target.value)}
-              required
+              onChange={setNewRequest}
+              pending={pending}
+              submitLabel="Create mission"
+              onSubmit={() => {
+                void send(
+                  {
+                    type: "create",
+                    key: crypto.randomUUID(),
+                    request: newRequest,
+                  },
+                  "create new mission",
+                );
+                setNewMissionOpen(false);
+              }}
             />
             <div className="modal-actions">
               <button
@@ -576,14 +646,194 @@ function Workspace({
               >
                 Cancel
               </button>
-              <button className="button primary" disabled={!newRequest.trim()}>
-                Create mission
-              </button>
             </div>
-          </form>
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function ConversationThread({
+  messages,
+  mission,
+  needsRequirements,
+  pending,
+  send,
+}: {
+  messages: ConversationMessage[];
+  mission: Mission;
+  needsRequirements: boolean;
+  pending: string | null;
+  send: (command: Command, label?: string) => Promise<void>;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length, mission.state, mission.question, mission.recommendation?.version]);
+  const showRequirements =
+    mission.state === "clarifying" &&
+    (Boolean(mission.question) || needsRequirements);
+  const recommendation = mission.recommendation;
+  const decision = recommendation
+    ? mission.approvals.find(
+        (item) => item.recommendationVersion === recommendation.version,
+      )
+    : null;
+  return (
+    <div className="conversation-thread" role="log" aria-live="polite">
+      {messages.map((message) => (
+        <article
+          key={message.id}
+          className={`chat-bubble ${message.role}`}
+          data-source={message.source}
+        >
+          <header>
+            <strong>
+              {message.role === "user"
+                ? "You"
+                : message.role === "somebody"
+                  ? "Somebody"
+                  : "System"}
+            </strong>
+            <time dateTime={new Date(message.at).toISOString()}>
+              {formatTime(message.at)}
+            </time>
+            {message.role === "somebody" && (
+              <button
+                type="button"
+                className="tts-button"
+                title="Read aloud"
+                onClick={() => speakText(message.text)}
+              >
+                <Icon name="speaker" size={14} />
+              </button>
+            )}
+          </header>
+          <p>{message.text}</p>
+        </article>
+      ))}
+      {showRequirements && (
+        <div className="chat-interactive">
+          <RequirementsForm mission={mission} send={send} pending={pending} />
+        </div>
+      )}
+      {recommendation && !decision && (
+        <div className="chat-interactive">
+          <InlineApproval
+            mission={mission}
+            send={send}
+            pending={pending}
+          />
+        </div>
+      )}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
+function InlineApproval({
+  mission,
+  send,
+  pending,
+}: {
+  mission: Mission;
+  send: (command: Command, label?: string) => Promise<void>;
+  pending: string | null;
+}) {
+  const recommendation = mission.recommendation;
+  if (!recommendation) return null;
+  const vendor = mission.vendors.find(
+    (candidate) => candidate.id === recommendation.vendorId,
+  );
+  const stale =
+    recommendation.evidenceVersion !== mission.evidenceVersion;
+  return (
+    <div className="inline-approval">
+      <span className="question-label">Your decision is required</span>
+      <h3>
+        {vendor
+          ? `Approve ${vendor.name} for ${formatMoney(recommendation.totalCents)}?`
+          : "Approve this recommendation?"}
+      </h3>
+      <p>{recommendation.rationale}</p>
+      {stale && (
+        <div className="stale-warning">
+          New evidence arrived after this recommendation. Review before
+          approving.
+        </div>
+      )}
+      <div className="approval-actions">
+        <button
+          className="button primary"
+          disabled={Boolean(pending) || stale}
+          onClick={() =>
+            void send(
+              {
+                type: "approve",
+                recommendationVersion: recommendation.version,
+              },
+              "approve recommendation",
+            )
+          }
+        >
+          <Icon name="approval" /> Approve
+        </button>
+        <button
+          className="button secondary"
+          disabled={Boolean(pending)}
+          onClick={() =>
+            void send(
+              {
+                type: "reject",
+                recommendationVersion: recommendation.version,
+              },
+              "reject recommendation",
+            )
+          }
+        >
+          Reject
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ActivityTrail({
+  events,
+}: {
+  events: MissionView["events"];
+}) {
+  return (
+    <section className="panel activity-mini">
+      <div className="section-heading compact">
+        <div>
+          <span className="eyebrow">Audit trail</span>
+          <h2>What changed</h2>
+        </div>
+        <span className="event-count">{events.length}</span>
+      </div>
+      <div className="timeline">
+        {events.length === 0 ? (
+          <p className="muted">No activity recorded yet.</p>
+        ) : (
+          events.slice(0, 12).map((event, index) => (
+            <div
+              className={`timeline-item ${event.kind}`}
+              key={`${event.at}-${index}`}
+            >
+              <span className="timeline-pin" />
+              <div>
+                <span>
+                  {titleCase(event.kind)} · {formatTime(event.at)}
+                </span>
+                <p>{event.text}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -606,64 +856,29 @@ function StateStepper({ step }: { step: number }) {
   );
 }
 
-function AgentControls({
-  mission,
-  liveAiEnabled,
-  pending,
-  send,
-}: {
-  mission: Mission;
-  liveAiEnabled: boolean;
-  pending: string | null;
-  send: (command: Command, label?: string) => Promise<void>;
-}) {
-  const waiting =
-    ["awaiting_approval", "complete", "blocked"].includes(mission.state) ||
-    mission.noViableOption !== null;
-  return (
-    <div className="agent-controls">
-      <span>
-        Development fixtures · vendor messages and accounting effects are
-        simulated.
-      </span>
-      <button
-        className="button primary"
-        disabled={Boolean(pending) || !liveAiEnabled || waiting}
-        onClick={() => void send({ type: "run_agent" }, "run agent")}
-      >
-        {mission.run?.status === "running"
-          ? "Check / resume worker"
-          : "Resume agent"}
-      </button>
-    </div>
-  );
-}
-
 function BriefCard({
   mission,
-  send,
-  pending,
+  compact = false,
 }: {
   mission: Mission;
-  send: (command: Command, label?: string) => Promise<void>;
-  pending: string | null;
+  compact?: boolean;
 }) {
   const needsRequirements = Object.values(mission.requirements).some(
     (value) => value == null,
   );
   return (
-    <section className="panel brief-panel">
+    <section className="panel brief-panel" id="brief">
       <div className="section-heading">
         <div>
-          <span className="eyebrow">01 · Structured brief</span>
-          <h2>The job as understood</h2>
+          <span className="eyebrow">{compact ? "Brief" : "01 · Structured brief"}</span>
+          <h2>{compact ? "Requirements" : "The job as understood"}</h2>
         </div>
         <span
           className={
             needsRequirements ? "status-chip warning" : "status-chip good"
           }
         >
-          {needsRequirements ? "Needs input" : "Requirements confirmed"}
+          {needsRequirements ? "Needs input" : "Confirmed"}
         </span>
       </div>
       <div className="requirements-grid">
@@ -681,9 +896,6 @@ function BriefCard({
         />
         <Metric label="Branding" value={requirementValue(mission, "branded")} />
       </div>
-      {(mission.question || needsRequirements) && (
-        <RequirementsForm mission={mission} send={send} pending={pending} />
-      )}
     </section>
   );
 }
@@ -707,7 +919,7 @@ function RequirementsForm({
 }) {
   const [quantity, setQuantity] = useState(mission.requirements.quantity ?? 25);
   const [budget, setBudget] = useState(
-    (mission.requirements.budgetCents ?? 75000) / 100,
+    (mission.requirements.budgetCents ?? 50000) / 100,
   );
   const [deadline, setDeadline] = useState(
     mission.requirements.deadlineAt
@@ -736,7 +948,7 @@ function RequirementsForm({
   return (
     <form className="question-card" onSubmit={submit}>
       <div>
-        <span className="question-label">Your input is needed</span>
+        <span className="question-label">Reply to Somebody</span>
         <h3>
           {mission.question ??
             "Confirm the details that define a viable quote."}
@@ -783,7 +995,7 @@ function RequirementsForm({
         </label>
       </div>
       <button className="button primary" disabled={Boolean(pending)}>
-        Confirm brief <Icon name="arrow" size={16} />
+        Confirm and resume <Icon name="arrow" size={16} />
       </button>
     </form>
   );
@@ -794,14 +1006,14 @@ function VendorsSection({ mission }: { mission: Mission }) {
     <section id="vendors">
       <div className="section-heading outside">
         <div>
-          <span className="eyebrow">02 · Vendor desk</span>
-          <h2>Four paths, one decision</h2>
+          <span className="eyebrow">Vendors</span>
+          <h2>Paths in play</h2>
         </div>
         <span className="section-note">
-          Evidence version {mission.evidenceVersion}
+          Evidence v{mission.evidenceVersion}
         </span>
       </div>
-      <div className="vendor-grid">
+      <div className="vendor-grid ops-vendor-grid">
         {mission.vendors.map((vendor) => (
           <VendorCard
             key={vendor.id}
@@ -861,6 +1073,14 @@ function VendorCard({
           {vendor.evaluation.conflicts.map(titleCase).join(" · ")}
         </div>
       )}
+      {vendor.evaluation.requiredQuantity != null && (
+        <div className="fact-alert">
+          <strong>Qty</strong>
+          Required {vendor.evaluation.requiredQuantity}
+          {vendor.evaluation.orderQuantity != null &&
+            ` · Order ${vendor.evaluation.orderQuantity}`}
+        </div>
+      )}
       {history.length > 1 && (
         <details className="evidence-history">
           <summary>{history.length} evidence records · view history</summary>
@@ -917,15 +1137,15 @@ function Comparison({ mission }: { mission: Mission }) {
     <section className="panel comparison-panel" id="comparison">
       <div className="section-heading">
         <div>
-          <span className="eyebrow">03 · Normalized comparison</span>
-          <h2>Comparable facts only</h2>
+          <span className="eyebrow">Comparison</span>
+          <h2>Normalized facts</h2>
         </div>
         <span className="section-note">
           {mission.ranking?.topVendorId
-            ? `Top ranked: ${mission.vendors.find((vendor) => vendor.id === mission.ranking?.topVendorId)?.name ?? mission.ranking.topVendorId}`
+            ? `Top: ${mission.vendors.find((vendor) => vendor.id === mission.ranking?.topVendorId)?.name ?? mission.ranking.topVendorId}`
             : mission.ranking?.noViableOption
               ? "No viable option"
-              : "Unknowns stay unknown"}
+              : "Waiting on evidence"}
         </span>
       </div>
       <div className="table-wrap">
@@ -985,10 +1205,12 @@ function ApprovalCard({
   mission,
   send,
   pending,
+  compact = false,
 }: {
   mission: Mission;
   send: (command: Command, label?: string) => Promise<void>;
   pending: string | null;
+  compact?: boolean;
 }) {
   const recommendation = mission.recommendation;
   const vendor = mission.vendors.find(
@@ -1006,10 +1228,10 @@ function ApprovalCard({
     >
       <div className="section-heading">
         <div>
-          <span className="eyebrow">04 · Human authority</span>
+          <span className="eyebrow">{compact ? "Approval" : "04 · Human authority"}</span>
           <h2>
             {recommendation
-              ? "A recommendation is ready"
+              ? "Recommendation state"
               : "No commitment without you"}
           </h2>
         </div>
@@ -1052,7 +1274,7 @@ function ApprovalCard({
               </div>
             )}
           </div>
-          {!decision && (
+          {!decision && !compact && (
             <div className="approval-actions">
               <button
                 className="button primary"
@@ -1087,15 +1309,16 @@ function ApprovalCard({
               >
                 Reject
               </button>
-              <small>Approval is persisted as a versioned decision.</small>
             </div>
+          )}
+          {!decision && compact && (
+            <small>Decide in the conversation thread.</small>
           )}
         </div>
       ) : (
         <p className="empty-copy">
-          The worker will return here after it has enough current, comparable
-          evidence. Any vendor commitment or purchase order remains blocked
-          until approval is persisted.
+          Somebody returns here after comparable evidence exists. Vendor
+          commitment stays blocked until approval is persisted.
         </p>
       )}
     </section>
@@ -1108,7 +1331,7 @@ function Effects({ mission }: { mission: Mission }) {
     <section className="panel effects-panel" id="proof">
       <div className="section-heading">
         <div>
-          <span className="eyebrow">05 · Effect proof</span>
+          <span className="eyebrow">Effect proof</span>
           <h2>Attempted is not complete</h2>
         </div>
         <span className="section-note">
@@ -1118,8 +1341,7 @@ function Effects({ mission }: { mission: Mission }) {
       </div>
       {finalEffects.length === 0 ? (
         <p className="empty-copy">
-          Post-approval effects will appear here with their attempt and
-          verification state.
+          Post-approval effects appear here with attempt and verification state.
         </p>
       ) : (
         <div className="effect-list">
@@ -1199,8 +1421,10 @@ function DevelopmentControls({
     <details className="dev-controls">
       <summary>
         <span>
-          <strong>Development controls</strong>
-          <small>Exercise the fixture workflow and reliability gates</small>
+          <strong>Development only</strong>
+          <small>
+            Fixture / debug controls — not part of the normal Somebody path
+          </small>
         </span>
         <span className="fixture-tag">Fixtures only</span>
       </summary>
@@ -1208,7 +1432,7 @@ function DevelopmentControls({
         <div className="fixture-warning">
           These controls persist Development data. Communication and
           purchase-order effects are simulated fixtures; they do not call
-          external providers.
+          external providers. Real adapters land from other lanes.
         </div>
         <div className="control-group">
           <div>

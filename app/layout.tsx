@@ -4,9 +4,8 @@ import { ConvexClientProvider } from "./ConvexClientProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Mission Control · Trust Issues",
-  description:
-    "A persistent workspace for an autonomous procurement colleague.",
+  title: "Somebody",
+  description: "For work that nobody has to do.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
