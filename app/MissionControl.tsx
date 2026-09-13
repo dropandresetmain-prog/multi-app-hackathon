@@ -1,157 +1,52 @@
 "use client";
 
-import {
-  Component,
-  type FormEvent,
-  type ReactNode,
-  useMemo,
-  useState,
-} from "react";
+import { Component, type FormEvent, type ReactNode, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type {
   Command,
   Effect,
-  Evidence,
   Mission,
   MissionView,
   Quote,
   Vendor,
 } from "@/lib/procurement/types";
+import { CHANNEL_ICON, Icon, type IconName } from "./somebody/Icon";
+import { Mascot } from "./somebody/Mascot";
+import { OperatorDrawer } from "./somebody/OperatorDrawer";
+import {
+  changedFacts,
+  contactCopy,
+  effectCopy,
+  eventCopy,
+  formatClock,
+  formatDate,
+  formatMoney,
+  formatQuoteValue,
+  cleanError,
+  headline,
+  humanize,
+  jobStages,
+  reasonCopy,
+  reasonFields,
+  selectedVendorId,
+  type Tone,
+  vendorEvidence,
+  vendorStatus,
+} from "./somebody/presentation";
 
 const DEFAULT_REQUEST =
   "Good news, the sponsor approved some budget for gifts for Thursday. Around 25 people, maybe $30 each max. Can you sort something out?";
-const money = new Intl.NumberFormat("en-SG", {
-  style: "currency",
-  currency: "SGD",
-  maximumFractionDigits: 2,
-});
 
-function formatMoney(cents: number | null | undefined) {
-  return cents == null ? "—" : money.format(cents / 100);
-}
-function formatTime(value: number | null | undefined, withDate = false) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("en-SG", {
-    day: withDate ? "numeric" : undefined,
-    month: withDate ? "short" : undefined,
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(value);
-}
-function titleCase(value: string) {
-  return value
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
+type Send = (command: Command, label?: string) => Promise<void>;
+type NoticeState = { kind: "ok" | "error"; text: string } | null;
+
 function defaultDeadline() {
   const date = new Date(Date.now() + 3 * 86_400_000);
   date.setMinutes(0, 0, 0);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
     .toISOString()
     .slice(0, 16);
-}
-
-type IconName =
-  | "spark"
-  | "brief"
-  | "vendors"
-  | "compare"
-  | "approval"
-  | "proof"
-  | "clock"
-  | "arrow";
-function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
-  const paths: Record<IconName, ReactNode> = {
-    spark: (
-      <path d="M12 2l1.45 4.55L18 8l-4.55 1.45L12 14l-1.45-4.55L6 8l4.55-1.45L12 2Zm-7 9 .9 2.1L8 14l-2.1.9L5 17l-.9-2.1L2 14l2.1-.9L5 11Zm13 5 .75 1.75L20.5 18l-1.75.75L18 20.5l-.75-1.75L15.5 18l1.75-.75L18 16Z" />
-    ),
-    brief: (
-      <>
-        <path d="M4 7h16v12H4z" />
-        <path d="M9 7V5h6v2M4 11h16M10 11v2h4v-2" />
-      </>
-    ),
-    vendors: (
-      <>
-        <circle cx="8" cy="8" r="3" />
-        <circle cx="17" cy="9" r="2.5" />
-        <path d="M2.5 19c.6-4 2.6-6 5.5-6s4.9 2 5.5 6M14 14c3.8-.5 6.1 1.2 7 5" />
-      </>
-    ),
-    compare: (
-      <>
-        <path d="M4 5h16M4 12h16M4 19h16" />
-        <path d="M8 3v4M15 10v4M11 17v4" />
-      </>
-    ),
-    approval: (
-      <>
-        <path d="m5 12 4 4L19 6" />
-        <circle cx="12" cy="12" r="10" />
-      </>
-    ),
-    proof: (
-      <>
-        <path d="M7 3h10l3 3v15H4V3h3Z" />
-        <path d="M8 3v5h8V3M8 13h8M8 17h5" />
-      </>
-    ),
-    clock: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3 2" />
-      </>
-    ),
-    arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
-  };
-  return (
-    <svg
-      aria-hidden="true"
-      className="icon"
-      height={size}
-      viewBox="0 0 24 24"
-      width={size}
-    >
-      {paths[name]}
-    </svg>
-  );
-}
-function communicationLabel(state: Vendor["communication"]) {
-  return {
-    none: "No outbound intent",
-    pending: "Intent pending",
-    attempted: "Send attempted",
-    unverified: "Provider success, unverified",
-    verified: "Verified contact",
-  }[state];
-}
-function channelMark(channel: Vendor["channel"]) {
-  return { Web: "◎", Gmail: "M", WhatsApp: "W", Instagram: "I" }[channel];
-}
-function newestEvidence(vendor: Vendor, evidence: Evidence[]) {
-  const ids = new Set(vendor.evaluation.currentEvidenceIds);
-  return (
-    evidence
-      .filter((item) => item.vendorId === vendor.id && ids.has(item.id))
-      .sort((a, b) => b.observedAt - a.observedAt)[0] ?? null
-  );
-}
-function requirementValue(
-  mission: Mission,
-  key: keyof Mission["requirements"],
-) {
-  const value = mission.requirements[key];
-  if (key === "budgetCents") return formatMoney(value as number | null);
-  if (key === "deadlineAt")
-    return value ? formatTime(value as number, true) : "Not confirmed";
-  if (key === "branded")
-    return value == null
-      ? "Not confirmed"
-      : value
-        ? "Required"
-        : "Not required";
-  return value == null ? "Not confirmed" : String(value);
 }
 
 class MissionErrorBoundary extends Component<
@@ -166,12 +61,13 @@ class MissionErrorBoundary extends Component<
     if (this.state.error)
       return (
         <main className="state-page">
-          <div className="state-card error-card">
-            <span className="eyebrow">Connection interrupted</span>
-            <h1>Mission Control could not load.</h1>
+          <div className="state-card">
+            <Mascot pose="stopped" size="md" />
+            <span className="kicker">Connection interrupted</span>
+            <h1>Somebody lost the thread.</h1>
             <p>
               {this.state.error.message ||
-                "Convex returned an unexpected error."}
+                "The workspace returned an unexpected error."}
             </p>
             <button
               className="button primary"
@@ -194,13 +90,34 @@ export function MissionControl() {
   );
 }
 
+/** `?job=<key>` pins a specific persisted job; otherwise the latest job is shown. */
+function usePinnedJob() {
+  // The first client render is the loading state either way, so reading the
+  // URL during initialisation cannot cause a hydration mismatch.
+  const [pinned, setPinned] = useState<string | undefined>(() =>
+    typeof window === "undefined"
+      ? undefined
+      : (new URLSearchParams(window.location.search).get("job") ?? undefined),
+  );
+  function pin(key: string) {
+    setPinned((current) => {
+      if (!current) return current;
+      const url = new URL(window.location.href);
+      url.searchParams.set("job", key);
+      window.history.replaceState(null, "", url);
+      return key;
+    });
+  }
+  return [pinned, pin] as const;
+}
+
 function MissionControlContent() {
-  const view = useQuery(api.missions.view, {}) as MissionView | undefined;
+  const [pinned, pin] = usePinnedJob();
+  const view = useQuery(api.missions.view, pinned ? { key: pinned } : {}) as
+    | MissionView
+    | undefined;
   const [pending, setPending] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{
-    kind: "ok" | "error";
-    text: string;
-  } | null>(null);
+  const [notice, setNotice] = useState<NoticeState>(null);
   async function send(command: Command, label: string = command.type) {
     if (pending) return;
     setPending(label);
@@ -222,10 +139,8 @@ function MissionControlContent() {
             payload?.message ??
             `Request failed (${response.status})`,
         );
-      setNotice({
-        kind: "ok",
-        text: payload?.result ?? `${titleCase(command.type)} accepted.`,
-      });
+      if (command.type === "create") pin(command.key);
+      setNotice({ kind: "ok", text: payload?.result ?? "Done." });
       if (
         view?.liveAiEnabled &&
         ["create", "answer_requirements", "approve", "reject"].includes(
@@ -243,49 +158,62 @@ function MissionControlContent() {
         if (!resumed.ok)
           setNotice({
             kind: "ok",
-            text: "Decision saved. Use Resume agent to continue from the persisted state.",
+            text: "Decision saved. Resume Somebody from Demo controls to continue.",
           });
       }
     } catch (error) {
       setNotice({
         kind: "error",
-        text: error instanceof Error ? error.message : "The command failed.",
+        text:
+          error instanceof Error ? cleanError(error.message) : "That didn't go through.",
       });
     } finally {
       setPending(null);
     }
   }
   if (view === undefined) return <LoadingState />;
-  if (!view.mission)
-    return (
-      <EmptyState
-        onCreate={send}
-        pending={pending}
-        notice={notice}
-        deployment={view.deployment}
-      />
-    );
   return (
-    <Workspace
-      key={view.mission.key}
-      view={view as MissionView & { mission: Mission }}
-      pending={pending}
-      notice={notice}
-      send={send}
-    />
+    <>
+      {view.mission ? (
+        <Workspace
+          key={view.mission.key}
+          view={view as MissionView & { mission: Mission }}
+          pending={pending}
+          notice={notice}
+          send={send}
+        />
+      ) : (
+        <EmptyState onCreate={send} pending={pending} notice={notice} />
+      )}
+      <OperatorDrawer
+        key={`drawer-${view.mission?.key ?? "none"}`}
+        mission={view.mission}
+        liveAiEnabled={view.liveAiEnabled}
+        deployment={view.deployment}
+        pending={pending}
+        send={send}
+      />
+    </>
+  );
+}
+
+// ── Chrome ──────────────────────────────────────────────────────────────────
+
+function Wordmark() {
+  return (
+    <span className="wordmark" aria-label="Somebody">
+      somebody<span className="wordmark-dot">.</span>
+    </span>
   );
 }
 
 function LoadingState() {
   return (
     <main className="state-page">
-      <div className="state-card loading-card" aria-live="polite">
-        <div className="brand-seal">
-          <Icon name="spark" size={22} />
-        </div>
-        <span className="eyebrow">Mission Control</span>
-        <h1>Connecting to the worker.</h1>
-        <p>Reading the latest procurement state from Convex Development…</p>
+      <div className="state-card" aria-live="polite">
+        <Mascot pose="reading" size="md" live />
+        <span className="kicker">One moment</span>
+        <h1>Somebody is catching up on the job.</h1>
         <div className="loading-line">
           <span />
         </div>
@@ -298,12 +226,10 @@ function EmptyState({
   onCreate,
   pending,
   notice,
-  deployment,
 }: {
-  onCreate: (command: Command, label?: string) => Promise<void>;
+  onCreate: Send;
   pending: string | null;
-  notice: { kind: "ok" | "error"; text: string } | null;
-  deployment: string;
+  notice: NoticeState;
 }) {
   const [request, setRequest] = useState(DEFAULT_REQUEST);
   function submit(event: FormEvent) {
@@ -314,55 +240,62 @@ function EmptyState({
     );
   }
   return (
-    <main className="empty-page">
-      <header className="empty-header">
-        <div className="wordmark">
-          <span className="brand-seal">
-            <Icon name="spark" />
-          </span>
-          <span>Trust Issues</span>
-        </div>
-        <span className="environment-pill">
-          <i /> Development · {deployment}
-        </span>
+    <div className="landing">
+      <header className="topbar">
+        <Wordmark />
       </header>
-      <section className="delegate-card">
-        <div className="delegate-copy">
-          <span className="eyebrow">Your procurement colleague</span>
-          <h1>Hand over the messy job.</h1>
-          <p>
-            Give the worker the outcome you need. It will structure the brief,
-            reconcile vendor evidence, and return when your authority is
-            required.
+      <main className="delegate">
+        <div className="delegate-intro">
+          <Mascot pose="idle" size="lg" />
+          <p className="tagline-lead">Somebody has to do it.</p>
+          <h1>Now Somebody can.</h1>
+          <p className="lead">
+            Hand over the messy job nobody owns. Somebody chases the people,
+            keeps track of what changes across your apps, and only comes back
+            when it needs your call.
           </p>
         </div>
-        <form onSubmit={submit}>
-          <label htmlFor="mission-request">What needs handling?</label>
+        <form className="delegate-card" onSubmit={submit}>
+          <label htmlFor="job-request">What needs handling?</label>
           <textarea
-            id="mission-request"
+            id="job-request"
             value={request}
             onChange={(event) => setRequest(event.target.value)}
-            rows={6}
+            rows={5}
             required
           />
-          <div className="form-footer">
-            <span>
-              Fixture-backed workspace · no external messages will be sent
+          <div className="delegate-foot">
+            <span className="hint">
+              <Icon name="lock" size={15} /> Nothing is committed without your
+              approval.
             </span>
             <button
               className="button primary large"
               disabled={Boolean(pending) || !request.trim()}
             >
-              {pending ? "Creating…" : "Delegate mission"}
+              {pending ? "Handing over…" : "Give Somebody the job"}
               <Icon name="arrow" />
             </button>
           </div>
           {notice && <Notice notice={notice} />}
         </form>
-      </section>
-    </main>
+        <ol className="promises">
+          <li>
+            <Icon name="laptop" /> Takes it from here
+          </li>
+          <li>
+            <Icon name="pen" /> Comes back for decisions
+          </li>
+          <li>
+            <Icon name="clipboard" /> Checks it actually happened
+          </li>
+        </ol>
+      </main>
+    </div>
   );
 }
+
+// ── Workspace ───────────────────────────────────────────────────────────────
 
 function Workspace({
   view,
@@ -372,329 +305,173 @@ function Workspace({
 }: {
   view: MissionView & { mission: Mission };
   pending: string | null;
-  notice: { kind: "ok" | "error"; text: string } | null;
-  send: (command: Command, label?: string) => Promise<void>;
+  notice: NoticeState;
+  send: Send;
 }) {
   const { mission } = view;
-  const [newMissionOpen, setNewMissionOpen] = useState(false);
-  const [newRequest, setNewRequest] = useState(DEFAULT_REQUEST);
-  const viable = mission.vendors.filter(
-    (vendor) => vendor.evaluation.status === "eligible",
-  ).length;
-  const currentStep = ["clarifying", "sourcing"].includes(mission.state)
-    ? 1
-    : mission.state === "awaiting_approval"
-      ? 2
-      : mission.state === "approved" || mission.state === "verifying"
-        ? 3
-        : mission.state === "complete"
-          ? 5
-          : 1;
+  const [newJobOpen, setNewJobOpen] = useState(false);
+  const now = headline(mission);
   return (
-    <div className="app-shell">
+    <div className="app">
       <header className="topbar">
-        <div className="wordmark">
-          <span className="brand-seal">
-            <Icon name="spark" />
-          </span>
-          <span>Trust Issues</span>
+        <div className="topbar-left">
+          <Wordmark />
+          <span className="crumb">{mission.title}</span>
         </div>
         <div className="topbar-right">
+          <LivePill mission={mission} />
           <button
-            className="button tertiary new-mission-button"
+            className="button quiet"
             disabled={Boolean(pending)}
-            onClick={() => setNewMissionOpen(true)}
+            onClick={() => setNewJobOpen(true)}
           >
-            + New mission
+            <Icon name="plus" size={16} /> New job
           </button>
-          <span className={`ai-pill ${view.liveAiEnabled ? "on" : "off"}`}>
-            <i /> {view.liveAiEnabled ? "Live AI enabled" : "Fixture worker"}
-          </span>
-          <span className="environment-pill">
-            <i /> Development · {view.deployment}
-          </span>
         </div>
       </header>
-      <div className="workspace-grid">
-        <aside className="sidebar">
-          <div className="sidebar-title">Mission</div>
-          <nav aria-label="Mission sections">
-            <a className="nav-item active" href="#brief">
-              <Icon name="brief" /> Brief
-            </a>
-            <a className="nav-item" href="#vendors">
-              <Icon name="vendors" /> Vendors{" "}
-              <span>{mission.vendors.length}</span>
-            </a>
-            <a className="nav-item" href="#comparison">
-              <Icon name="compare" /> Comparison <span>{viable}</span>
-            </a>
-            <a className="nav-item" href="#approval">
-              <Icon name="approval" /> Approval
-            </a>
-            <a className="nav-item" href="#proof">
-              <Icon name="proof" /> Effect proof
-            </a>
-          </nav>
-          <div className="sidebar-foot">
-            <span>Source of truth</span>
-            <strong>Convex Development</strong>
-            <small>{mission.key.slice(0, 12)}</small>
-          </div>
-        </aside>
-        <main className="mission-main">
-          <section className="mission-heading" id="brief">
-            <div>
-              <div className="heading-meta">
-                <span className={`state-dot ${mission.state}`} />{" "}
-                {titleCase(mission.state)} · Updated{" "}
-                {formatTime(mission.updatedAt)}
-              </div>
-              <h1>{mission.title}</h1>
-              <p className="mission-request">“{mission.request}”</p>
-            </div>
-            <StateStepper step={currentStep} />
-          </section>
-          {notice && <Notice notice={notice} />}
-          <section className="now-card">
-            <div className="agent-orb">
-              <Icon name="spark" size={20} />
-            </div>
+      <main className="page">
+        <JobHeader mission={mission} />
+        {notice && <Notice notice={notice} />}
+        {mission.state === "awaiting_approval" ? (
+          <DecisionPanel mission={mission} send={send} pending={pending} />
+        ) : mission.state === "complete" ? (
+          <DonePanel mission={mission} />
+        ) : (
+          <section className={`now-panel tone-${now.tone}`} aria-live="polite">
+            <Mascot pose={now.pose} size="lg" live={now.live} />
             <div className="now-copy">
-              <span className="eyebrow">Procurement Agent · Working note</span>
-              <h2>{mission.activity}</h2>
-              {mission.run && (
-                <p>
-                  {mission.run.summary} · {mission.run.toolCalls} tool{" "}
-                  {mission.run.toolCalls === 1 ? "call" : "calls"}
-                </p>
+              <span className="eyebrow">
+                {now.live && <i className="live-dot" />}
+                {now.eyebrow}
+              </span>
+              <h2>{now.title}</h2>
+              {now.detail && <p>{now.detail}</p>}
+              {mission.state === "clarifying" && (
+                <RequirementsForm
+                  mission={mission}
+                  send={send}
+                  pending={pending}
+                />
+              )}
+              {["approved", "verifying", "blocked"].includes(mission.state) && (
+                <ProofChecklist mission={mission} />
               )}
             </div>
-            <div className="now-state">
-              <span
-                className={
-                  mission.run?.status === "running" ? "pulse" : "still"
-                }
-              />
-              {mission.run?.status === "running"
-                ? "Working now"
-                : "State persisted"}
-            </div>
           </section>
-          <AgentControls
-            mission={mission}
-            liveAiEnabled={view.liveAiEnabled}
-            pending={pending}
-            send={send}
-          />
-          <div className="content-columns">
-            <div className="primary-column">
-              <BriefCard mission={mission} send={send} pending={pending} />
-              <VendorsSection mission={mission} />
-              <Comparison mission={mission} />
-              <ApprovalCard mission={mission} send={send} pending={pending} />
-              <Effects mission={mission} />
-              <DevelopmentControls
-                mission={mission}
-                liveAiEnabled={view.liveAiEnabled}
-                send={send}
-                pending={pending}
-              />
-            </div>
-            <aside className="activity-panel">
-              <div className="section-heading compact">
-                <div>
-                  <span className="eyebrow">Audit trail</span>
-                  <h2>What changed</h2>
-                </div>
-                <span className="event-count">{view.events.length}</span>
-              </div>
-              <div className="timeline">
-                {view.events.length === 0 ? (
-                  <p className="muted">No activity recorded yet.</p>
-                ) : (
-                  view.events.slice(0, 16).map((event, index) => (
-                    <div
-                      className={`timeline-item ${event.kind}`}
-                      key={`${event.at}-${index}`}
-                    >
-                      <span className="timeline-pin" />
-                      <div>
-                        <span>
-                          {titleCase(event.kind)} · {formatTime(event.at)}
-                        </span>
-                        <p>{event.text}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </aside>
-          </div>
-        </main>
-      </div>
-      {newMissionOpen && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={() => setNewMissionOpen(false)}
-        >
-          <form
-            className="new-mission-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="new-mission-title"
-            onMouseDown={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send(
-                {
-                  type: "create",
-                  key: crypto.randomUUID(),
-                  request: newRequest,
-                },
-                "create new mission",
-              );
-              setNewMissionOpen(false);
-            }}
-          >
-            <span className="eyebrow">Start another fixture</span>
-            <h2 id="new-mission-title">Delegate a new mission</h2>
-            <label htmlFor="new-mission-request">Request</label>
-            <textarea
-              id="new-mission-request"
-              rows={5}
-              value={newRequest}
-              onChange={(event) => setNewRequest(event.target.value)}
-              required
-            />
-            <div className="modal-actions">
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => setNewMissionOpen(false)}
-              >
-                Cancel
-              </button>
-              <button className="button primary" disabled={!newRequest.trim()}>
-                Create mission
-              </button>
-            </div>
-          </form>
+        )}
+        <div className="columns">
+          <VendorsSection mission={mission} />
+          <ActivityLog events={view.events} />
+          <Comparison mission={mission} />
+          <FollowThrough mission={mission} />
         </div>
+        <footer className="page-foot">
+          Development workspace · vendor replies and accounting are simulated
+          fixtures
+        </footer>
+      </main>
+      {newJobOpen && (
+        <NewJobModal
+          onClose={() => setNewJobOpen(false)}
+          onCreate={(request) => {
+            void send(
+              { type: "create", key: crypto.randomUUID(), request },
+              "create new mission",
+            );
+            setNewJobOpen(false);
+          }}
+        />
       )}
     </div>
   );
 }
 
-function StateStepper({ step }: { step: number }) {
-  const stages = ["Source", "Recommend", "Approve", "Verify"];
+function LivePill({ mission }: { mission: Mission }) {
+  // The pill answers "who has the ball?" — Somebody (orange) or you (yellow).
+  const live = mission.run?.status === "running";
+  const [label, tone]: [string, Tone] =
+    mission.state === "complete"
+      ? ["Done and verified", "verified"]
+      : mission.state === "blocked"
+        ? ["Stopped for review", "ineligible"]
+        : mission.state === "awaiting_approval" || mission.state === "clarifying"
+          ? ["Waiting on you", "decision"]
+          : mission.noViableOption
+            ? ["Needs a rethink", "ineligible"]
+            : [live ? "Somebody is working" : "Somebody is on it", "somebody"];
   return (
-    <ol className="stepper" aria-label="Mission progress">
-      {stages.map((stage, index) => (
-        <li
-          className={
-            index + 1 < step ? "done" : index + 1 === step ? "current" : ""
-          }
-          key={stage}
-        >
-          <span>{index + 1 < step ? "✓" : index + 1}</span>
-          {stage}
-        </li>
-      ))}
-    </ol>
+    <span className={`live-pill tone-${tone}`}>
+      <i className={live ? "live-dot" : "still-dot"} />
+      {label}
+    </span>
   );
 }
 
-function AgentControls({
-  mission,
-  liveAiEnabled,
-  pending,
-  send,
-}: {
-  mission: Mission;
-  liveAiEnabled: boolean;
-  pending: string | null;
-  send: (command: Command, label?: string) => Promise<void>;
-}) {
-  const waiting =
-    ["awaiting_approval", "complete", "blocked"].includes(mission.state) ||
-    mission.noViableOption !== null;
+function JobHeader({ mission }: { mission: Mission }) {
+  const r = mission.requirements;
+  const facts: { label: string; value: string | null; icon: IconName }[] = [
+    {
+      label: "Quantity",
+      value: r.quantity == null ? null : `${r.quantity} gifts`,
+      icon: "clipboard",
+    },
+    {
+      label: "Budget",
+      value: r.budgetCents == null ? null : `${formatMoney(r.budgetCents)} total`,
+      icon: "ledger",
+    },
+    {
+      label: "Must arrive by",
+      value: r.deadlineAt == null ? null : formatDate(r.deadlineAt),
+      icon: "clock",
+    },
+    {
+      label: "Branding",
+      value: r.branded == null ? null : r.branded ? "Logo required" : "Not needed",
+      icon: "stamp",
+    },
+  ];
   return (
-    <div className="agent-controls">
-      <span>
-        Development fixtures · vendor messages and accounting effects are
-        simulated.
-      </span>
-      <button
-        className="button primary"
-        disabled={Boolean(pending) || !liveAiEnabled || waiting}
-        onClick={() => void send({ type: "run_agent" }, "run agent")}
-      >
-        {mission.run?.status === "running"
-          ? "Check / resume worker"
-          : "Resume agent"}
-      </button>
-    </div>
-  );
-}
-
-function BriefCard({
-  mission,
-  send,
-  pending,
-}: {
-  mission: Mission;
-  send: (command: Command, label?: string) => Promise<void>;
-  pending: string | null;
-}) {
-  const needsRequirements = Object.values(mission.requirements).some(
-    (value) => value == null,
-  );
-  return (
-    <section className="panel brief-panel">
-      <div className="section-heading">
-        <div>
-          <span className="eyebrow">01 · Structured brief</span>
-          <h2>The job as understood</h2>
-        </div>
-        <span
-          className={
-            needsRequirements ? "status-chip warning" : "status-chip good"
-          }
-        >
-          {needsRequirements ? "Needs input" : "Requirements confirmed"}
-        </span>
+    <section className="job-header">
+      <div className="job-ask">
+        <span className="kicker">You asked</span>
+        <blockquote>“{mission.request}”</blockquote>
+        <dl className="brief-facts">
+          {facts.map((fact) => (
+            <div
+              key={fact.label}
+              className={fact.value ? "fact" : "fact is-unknown"}
+            >
+              <dt>
+                <Icon name={fact.icon} size={14} />
+                {fact.label}
+              </dt>
+              <dd>{fact.value ?? "Not confirmed"}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
-      <div className="requirements-grid">
-        <Metric
-          label="Quantity"
-          value={requirementValue(mission, "quantity")}
-        />
-        <Metric
-          label="Total budget"
-          value={requirementValue(mission, "budgetCents")}
-        />
-        <Metric
-          label="Must arrive"
-          value={requirementValue(mission, "deadlineAt")}
-        />
-        <Metric label="Branding" value={requirementValue(mission, "branded")} />
-      </div>
-      {(mission.question || needsRequirements) && (
-        <RequirementsForm mission={mission} send={send} pending={pending} />
-      )}
+      <ol className="progress" aria-label="Job progress">
+        {jobStages(mission).map((stage, index) => (
+          <li key={stage.id} className={`step ${stage.state}`}>
+            <span className="step-mark">
+              {stage.state === "done" ? (
+                <Icon name="check" size={14} />
+              ) : stage.state === "stopped" ? (
+                <Icon name="hand" size={14} />
+              ) : (
+                index + 1
+              )}
+            </span>
+            <span className="step-label">{stage.label}</span>
+          </li>
+        ))}
+      </ol>
     </section>
   );
 }
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
+
+// ── Brief questions ─────────────────────────────────────────────────────────
 
 function RequirementsForm({
   mission,
@@ -702,7 +479,7 @@ function RequirementsForm({
   pending,
 }: {
   mission: Mission;
-  send: (command: Command, label?: string) => Promise<void>;
+  send: Send;
   pending: string | null;
 }) {
   const [quantity, setQuantity] = useState(mission.requirements.quantity ?? 25);
@@ -734,790 +511,733 @@ function RequirementsForm({
     );
   }
   return (
-    <form className="question-card" onSubmit={submit}>
-      <div>
-        <span className="question-label">Your input is needed</span>
-        <h3>
-          {mission.question ??
-            "Confirm the details that define a viable quote."}
-        </h3>
-      </div>
-      <div className="input-grid">
-        <label>
-          Quantity
-          <input
-            type="number"
-            min="1"
-            value={quantity}
-            onChange={(e) => setQuantity(Number(e.target.value))}
-            required
-          />
-        </label>
-        <label>
-          Total budget (SGD)
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={budget}
-            onChange={(e) => setBudget(Number(e.target.value))}
-            required
-          />
-        </label>
-        <label className="wide">
-          Delivery deadline
-          <input
-            type="datetime-local"
-            value={deadline}
-            onChange={(e) => setDeadline(e.target.value)}
-            required
-          />
-        </label>
-        <label className="check-label">
-          <input
-            type="checkbox"
-            checked={branded}
-            onChange={(e) => setBranded(e.target.checked)}
-          />{" "}
-          Custom branding required
-        </label>
-      </div>
+    <form className="brief-form" onSubmit={submit}>
+      <label>
+        How many
+        <input
+          type="number"
+          min="1"
+          value={quantity}
+          onChange={(e) => setQuantity(Number(e.target.value))}
+          required
+        />
+      </label>
+      <label>
+        Total budget (SGD)
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={budget}
+          onChange={(e) => setBudget(Number(e.target.value))}
+          required
+        />
+      </label>
+      <label className="wide">
+        Must arrive by
+        <input
+          type="datetime-local"
+          value={deadline}
+          onChange={(e) => setDeadline(e.target.value)}
+          required
+        />
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={branded}
+          onChange={(e) => setBranded(e.target.checked)}
+        />
+        Add our logo
+      </label>
       <button className="button primary" disabled={Boolean(pending)}>
-        Confirm brief <Icon name="arrow" size={16} />
+        {pending === "save requirements" ? "Saving…" : "That's right, go"}
+        <Icon name="arrow" size={16} />
       </button>
     </form>
   );
 }
 
-function VendorsSection({ mission }: { mission: Mission }) {
+// ── Vendors ─────────────────────────────────────────────────────────────────
+
+function StatusPill({ tone, children }: { tone: Tone; children: ReactNode }) {
+  return <span className={`pill tone-${tone}`}>{children}</span>;
+}
+
+function SectionHead({
+  kicker,
+  title,
+  aside,
+}: {
+  kicker: string;
+  title: string;
+  aside?: ReactNode;
+}) {
   return (
-    <section id="vendors">
-      <div className="section-heading outside">
-        <div>
-          <span className="eyebrow">02 · Vendor desk</span>
-          <h2>Four paths, one decision</h2>
-        </div>
-        <span className="section-note">
-          Evidence version {mission.evidenceVersion}
-        </span>
+    <div className="section-head">
+      <div>
+        <span className="kicker">{kicker}</span>
+        <h2>{title}</h2>
       </div>
+      {aside && <div className="section-aside">{aside}</div>}
+    </div>
+  );
+}
+
+function VendorsSection({ mission }: { mission: Mission }) {
+  const channels = mission.vendors.map((v) => v.channel);
+  return (
+    <section className="section" id="vendors">
+      <SectionHead
+        kicker="What Somebody found"
+        title={`${mission.vendors.length} vendors, ${new Set(channels).size} channels`}
+        aside={
+          <span className="channel-row">
+            {mission.vendors.map((vendor) => (
+              <span key={vendor.id} className="channel-chip" title={vendor.channel}>
+                <Icon name={CHANNEL_ICON[vendor.channel]} size={15} />
+                {vendor.channel}
+              </span>
+            ))}
+          </span>
+        }
+      />
       <div className="vendor-grid">
         {mission.vendors.map((vendor) => (
-          <VendorCard
-            key={vendor.id}
-            vendor={vendor}
-            evidence={mission.evidence}
-          />
+          <VendorCard key={vendor.id} vendor={vendor} mission={mission} />
         ))}
       </div>
     </section>
   );
 }
-function VendorCard({
-  vendor,
-  evidence,
-}: {
-  vendor: Vendor;
-  evidence: Evidence[];
-}) {
-  const latest = newestEvidence(vendor, evidence);
-  const history = evidence
-    .filter((item) => item.vendorId === vendor.id)
-    .sort((a, b) => b.observedAt - a.observedAt);
-  function changedFields(item: Evidence) {
-    return (
-      vendor.evaluation.supersededClaims?.find(
-        (claim) => claim.evidenceId === item.id,
-      )?.fields ?? []
-    ).map(titleCase);
-  }
+
+function VendorCard({ vendor, mission }: { vendor: Vendor; mission: Mission }) {
+  const status = vendorStatus(vendor, mission);
+  const history = vendorEvidence(vendor, mission.evidence);
+  const latest = history[0] ?? null;
+  const changes = changedFacts(vendor, mission.evidence);
+  const changedIds = new Set(
+    (vendor.evaluation.supersededClaims ?? []).map((claim) => claim.evidenceId),
+  );
   return (
-    <article className={`vendor-card ${vendor.evaluation.status}`}>
-      <div className="vendor-top">
-        <div className={`channel-mark ${vendor.channel.toLowerCase()}`}>
-          {channelMark(vendor.channel)}
-        </div>
-        <div>
-          <span className="channel-name">{vendor.channel}</span>
-          <h3>{vendor.name}</h3>
-          <p>{vendor.product}</p>
-        </div>
-        <span className={`status-chip ${vendor.evaluation.status}`}>
-          {titleCase(vendor.evaluation.status)}
+    <article className={`vendor-card tone-${status.tone}`}>
+      <header className="vendor-head">
+        <span className="channel-chip">
+          <Icon name={CHANNEL_ICON[vendor.channel]} size={15} />
+          {vendor.channel}
         </span>
-      </div>
-      <blockquote>
-        {latest?.text ?? "No vendor evidence recorded yet."}
-      </blockquote>
-      {vendor.evaluation.missing.length > 0 && (
-        <div className="fact-alert">
-          <strong>Missing</strong>
-          {vendor.evaluation.missing.map(titleCase).join(" · ")}
+        <StatusPill tone={status.tone}>{status.label}</StatusPill>
+      </header>
+      <h3>{vendor.name}</h3>
+      <p className="vendor-product">{vendor.product}</p>
+      {latest ? (
+        // Key on the evidence id so a new reply briefly highlights on arrival.
+        <blockquote key={latest.id} className="vendor-quote">
+          <span className="quote-meta">
+            {vendor.channel === "Web" ? "Catalogue listing" : "Latest reply"} ·{" "}
+            {formatClock(latest.observedAt)}
+          </span>
+          {latest.text}
+        </blockquote>
+      ) : (
+        <div className="vendor-quote is-empty">
+          {vendor.channel === "Web" || vendor.communication === "none" ? (
+            "Nothing yet."
+          ) : (
+            <span className="typing">
+              Waiting for {vendor.name} to reply
+              <i />
+              <i />
+              <i />
+            </span>
+          )}
         </div>
       )}
-      {vendor.evaluation.conflicts.length > 0 && (
-        <div className="fact-alert conflict">
-          <strong>Contradicted</strong>
-          {vendor.evaluation.conflicts.map(titleCase).join(" · ")}
+      {changes.length > 0 && (
+        <div className="changed-strip" key={`chg-${mission.evidenceVersion}`}>
+          <span className="changed-label">
+            <Icon name="changed" size={14} /> Changed
+          </span>
+          {changes.map((fact) => (
+            <span key={fact.field} className="changed-fact">
+              {fact.label}: <s>{fact.was}</s> → <strong>{fact.now}</strong>
+            </span>
+          ))}
         </div>
       )}
+      {status.note && <p className={`vendor-note tone-${status.tone}`}>{status.note}</p>}
+      <footer className="vendor-foot">
+        <span>{contactCopy(vendor)}</span>
+        <span className="vendor-total">
+          {vendor.evaluation.totalCents != null ? (
+            <>
+              <small>Landed</small> {formatMoney(vendor.evaluation.totalCents)}
+            </>
+          ) : (
+            <small>No total yet</small>
+          )}
+        </span>
+      </footer>
       {history.length > 1 && (
-        <details className="evidence-history">
-          <summary>{history.length} evidence records · view history</summary>
-          {history.map((item, index) => {
-            const changed = changedFields(item);
-            return (
-              <div className="history-item" key={item.id}>
-                <span
-                  className={
-                    changed.length ? "history-dot changed" : "history-dot"
-                  }
-                />
-                <p className={changed.length ? "is-stale" : ""}>{item.text}</p>
+        <details className="history">
+          <summary>
+            {history.length} messages · see how this changed
+          </summary>
+          <ol>
+            {history.map((item, index) => (
+              <li
+                key={item.id}
+                className={changedIds.has(item.id) ? "is-superseded" : ""}
+              >
+                <p>{item.text}</p>
                 <small>
-                  {index === 0 ? "Latest" : `Revision ${item.revision}`} ·{" "}
-                  {formatTime(item.observedAt, true)}
-                  {changed.length > 0 && ` · Replaced: ${changed.join(", ")}`}
+                  {index === 0 ? "Latest" : `Earlier`} ·{" "}
+                  {formatDate(item.observedAt)}
+                  {changedIds.has(item.id) && " · replaced by newer info"}
                 </small>
-              </div>
-            );
-          })}
+              </li>
+            ))}
+          </ol>
         </details>
       )}
-      <div className="vendor-foot">
-        <span>{communicationLabel(vendor.communication ?? "none")}</span>
-        <strong>{formatMoney(vendor.evaluation.totalCents)}</strong>
-      </div>
     </article>
   );
 }
 
-const quoteFields: {
-  key: keyof Quote;
-  label: string;
-  format?: "money" | "date" | "bool";
-}[] = [
-  { key: "quantity", label: "Quoted qty" },
-  { key: "unitCents", label: "Unit", format: "money" },
-  { key: "setupCents", label: "Setup", format: "money" },
-  { key: "deliveryCents", label: "Delivery", format: "money" },
-  { key: "taxCents", label: "Tax", format: "money" },
-  { key: "deliveryAt", label: "Arrival", format: "date" },
-  { key: "branded", label: "Branded", format: "bool" },
+// ── Comparison ──────────────────────────────────────────────────────────────
+
+const COLUMNS: { key: keyof Quote; label: string }[] = [
+  { key: "unitCents", label: "Unit" },
+  { key: "setupCents", label: "Setup" },
+  { key: "deliveryCents", label: "Delivery" },
+  { key: "taxCents", label: "Tax" },
+  { key: "moq", label: "Min. order" },
+  { key: "deliveryAt", label: "Arrives" },
+  { key: "branded", label: "Logo" },
 ];
-function quoteValue(value: unknown, format?: "money" | "date" | "bool") {
-  if (value == null) return <span className="unknown">Unknown</span>;
-  if (format === "money") return formatMoney(value as number);
-  if (format === "date") return formatTime(value as number, true);
-  if (format === "bool") return value ? "Yes" : "No";
-  return String(value);
-}
+
 function Comparison({ mission }: { mission: Mission }) {
+  const ranked = mission.ranking.rankedVendorIds;
   return (
-    <section className="panel comparison-panel" id="comparison">
-      <div className="section-heading">
-        <div>
-          <span className="eyebrow">03 · Normalized comparison</span>
-          <h2>Comparable facts only</h2>
-        </div>
-        <span className="section-note">
-          {mission.ranking?.topVendorId
-            ? `Top ranked: ${mission.vendors.find((vendor) => vendor.id === mission.ranking?.topVendorId)?.name ?? mission.ranking.topVendorId}`
-            : mission.ranking?.noViableOption
-              ? "No viable option"
-              : "Unknowns stay unknown"}
-        </span>
-      </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Vendor</th>
-              {quoteFields.map((field) => (
-                <th key={field.key}>{field.label}</th>
-              ))}
-              <th>Order qty</th>
-              <th>Landed</th>
-              <th>Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mission.vendors.map((vendor) => (
-              <tr key={vendor.id} className={vendor.evaluation.status}>
-                <th>
-                  <span className="table-vendor">
-                    {vendor.name}
-                    <small>{vendor.channel}</small>
-                  </span>
-                </th>
-                {quoteFields.map((field) => (
-                  <td key={field.key}>
-                    {quoteValue(
-                      vendor.evaluation.quote[field.key],
-                      field.format,
-                    )}
-                  </td>
+    <section className="section" id="comparison">
+      <SectionHead
+        kicker="Side by side"
+        title="Like for like, unknowns stay unknown"
+        aside={
+          <span className="section-note">
+            Landed = order qty × unit + setup + delivery + tax
+          </span>
+        }
+      />
+      <div className="table-card">
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Vendor</th>
+                {COLUMNS.map((column) => (
+                  <th scope="col" key={column.key}>
+                    {column.label}
+                  </th>
                 ))}
-                <td>{vendor.evaluation.orderQuantity ?? "—"}</td>
-                <td className="landed">
-                  {formatMoney(vendor.evaluation.totalCents)}
-                </td>
-                <td>
-                  <span className={`status-chip ${vendor.evaluation.status}`}>
-                    {titleCase(vendor.evaluation.status)}
-                  </span>
-                  {vendor.evaluation.reasons[0] && (
-                    <small className="decision-reason">
-                      {vendor.evaluation.reasons[0]}
-                    </small>
-                  )}
-                </td>
+                <th scope="col">Order qty</th>
+                <th scope="col" className="num">
+                  Landed
+                </th>
+                <th scope="col">Verdict</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {mission.vendors.map((vendor) => {
+                const status = vendorStatus(vendor, mission);
+                const failing = reasonFields(vendor);
+                const changed = new Map(
+                  changedFacts(vendor, mission.evidence).map((f) => [f.field, f]),
+                );
+                const rank = ranked.indexOf(vendor.id);
+                return (
+                  <tr key={vendor.id} className={`tone-${status.tone}`}>
+                    <th scope="row">
+                      <span className="table-vendor">
+                        <Icon name={CHANNEL_ICON[vendor.channel]} size={15} />
+                        <span>
+                          {vendor.name}
+                          <small>{vendor.channel}</small>
+                        </span>
+                      </span>
+                    </th>
+                    {COLUMNS.map((column) => {
+                      const value = vendor.evaluation.quote[column.key];
+                      const change = changed.get(column.key);
+                      const classes = [
+                        value == null ? "is-unknown" : "",
+                        failing.has(column.key) ? "is-failing" : "",
+                        change ? "is-changed" : "",
+                      ].join(" ");
+                      return (
+                        <td
+                          key={column.key}
+                          className={classes}
+                          title={change ? `Was ${change.was}` : undefined}
+                        >
+                          {value == null ? (
+                            <span className="unknown-chip">?</span>
+                          ) : column.key === "deliveryAt" ? (
+                            <DateCell value={value as number} />
+                          ) : (
+                            formatQuoteValue(column.key, value)
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td>{vendor.evaluation.orderQuantity ?? <span className="unknown-chip">?</span>}</td>
+                    <td className={`num landed${failing.has("total") ? " is-failing" : ""}`}>
+                      {vendor.evaluation.totalCents == null ? (
+                        <span className="unknown-chip">?</span>
+                      ) : (
+                        formatMoney(vendor.evaluation.totalCents)
+                      )}
+                    </td>
+                    <td>
+                      <StatusPill tone={status.tone}>{status.label}</StatusPill>
+                      {vendor.evaluation.status === "eligible" && rank >= 0 && (
+                        <small className="verdict-note">Ranked #{rank + 1}</small>
+                      )}
+                      {vendor.evaluation.status === "ineligible" &&
+                        vendor.evaluation.reasons[0] && (
+                          <small className="verdict-note">
+                            {reasonCopy(vendor.evaluation.reasons[0])}
+                          </small>
+                        )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="table-legend">
+          <span>
+            <span className="unknown-chip">?</span> Not confirmed yet
+          </span>
+          <span>
+            <i className="legend-swatch changed" /> Changed by a newer reply
+          </span>
+          <span>
+            <i className="legend-swatch failing" /> Fails a hard requirement
+          </span>
+        </div>
       </div>
     </section>
   );
 }
 
-function ApprovalCard({
+function DateCell({ value }: { value: number }) {
+  return (
+    <span className="date-cell">
+      {new Intl.DateTimeFormat("en-SG", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }).format(value)}
+      <small>{formatClock(value)}</small>
+    </span>
+  );
+}
+
+// ── Decision ────────────────────────────────────────────────────────────────
+
+function DecisionPanel({
   mission,
   send,
   pending,
 }: {
   mission: Mission;
-  send: (command: Command, label?: string) => Promise<void>;
+  send: Send;
   pending: string | null;
 }) {
   const recommendation = mission.recommendation;
-  const vendor = mission.vendors.find(
-    (candidate) => candidate.id === recommendation?.vendorId,
+  const vendor = mission.vendors.find((v) => v.id === recommendation?.vendorId);
+  if (!recommendation || !vendor) return null;
+  const decision = mission.approvals.find(
+    (item) => item.recommendationVersion === recommendation.version,
   );
-  const decision = recommendation
-    ? mission.approvals.find(
-        (item) => item.recommendationVersion === recommendation.version,
-      )
-    : null;
+  const stale = recommendation.evidenceVersion !== mission.evidenceVersion;
+  const others = mission.vendors.filter((v) => v.id !== vendor.id);
+  const ranked = mission.ranking.rankedVendorIds;
+  const quote = vendor.evaluation.quote;
   return (
-    <section
-      className={`approval-card ${recommendation ? "ready" : "waiting"}`}
-      id="approval"
-    >
-      <div className="section-heading">
+    <section className="now-panel decision-panel tone-decision" id="approval">
+      <div className="decision-head">
+        <Mascot pose="presenting" size="lg" />
         <div>
-          <span className="eyebrow">04 · Human authority</span>
+          <span className="eyebrow">Needs your approval</span>
           <h2>
-            {recommendation
-              ? "A recommendation is ready"
-              : "No commitment without you"}
+            Somebody recommends <mark>{vendor.name}</mark>
           </h2>
+          <p>Nothing is committed until you approve.</p>
         </div>
-        <span
-          className={`status-chip ${decision?.decision === "approved" ? "good" : decision?.decision === "rejected" ? "ineligible" : recommendation ? "warning" : "waiting"}`}
-        >
-          {decision
-            ? titleCase(decision.decision)
-            : recommendation
-              ? "Approval required"
-              : "Waiting"}
-        </span>
       </div>
-      {mission.noViableOption && !recommendation ? (
-        <p className="empty-copy">
-          No current supplier satisfies the confirmed constraints.
-          {` ${mission.noViableOption.reason}`} No commitment effect was created.
-        </p>
-      ) : recommendation && vendor ? (
-        <div className="recommendation-body">
-          <div className="recommendation-pick">
-            <span>Recommended vendor</span>
-            <h3>{vendor.name}</h3>
-            <strong>{formatMoney(recommendation.totalCents)}</strong>
-            <small>
-              Recommendation v{recommendation.version} · evidence v
-              {recommendation.evidenceVersion} · order qty{" "}
-              {recommendation.orderQuantity ??
-                vendor.evaluation.orderQuantity ??
-                "—"}
-            </small>
-          </div>
-          <div className="recommendation-reason">
-            <span>Why this option</span>
-            <p>{recommendation.rationale}</p>
-            {recommendation.evidenceVersion !== mission.evidenceVersion && (
-              <div className="stale-warning">
-                New evidence arrived after this recommendation. Review before
-                approving.
-              </div>
-            )}
-          </div>
-          {!decision && (
-            <div className="approval-actions">
+      <div className="decision-grid">
+        <div className="pick">
+          <span className="channel-chip">
+            <Icon name={CHANNEL_ICON[vendor.channel]} size={15} />
+            {vendor.channel}
+          </span>
+          <h3>{vendor.product}</h3>
+          <strong className="pick-total">
+            {formatMoney(recommendation.totalCents)}
+          </strong>
+          <span className="pick-sub">landed, all fees included</span>
+          <dl>
+            <div>
+              <dt>Order</dt>
+              <dd>{recommendation.orderQuantity} units</dd>
+            </div>
+            <div>
+              <dt>Arrives</dt>
+              <dd>{formatDate(quote.deliveryAt)}</dd>
+            </div>
+            <div>
+              <dt>Logo</dt>
+              <dd>{quote.branded == null ? "Unknown" : quote.branded ? "Included" : "No"}</dd>
+            </div>
+            <div>
+              <dt>Budget</dt>
+              <dd>{formatMoney(mission.requirements.budgetCents)}</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="why">
+          <h3>Why Somebody recommends this</h3>
+          <p className="rationale">{recommendation.rationale}</p>
+          <h3>Why not the others</h3>
+          <ul className="others">
+            {others.map((other) => {
+              const status = vendorStatus(other, mission);
+              const rank = ranked.indexOf(other.id);
+              return (
+                <li key={other.id}>
+                  <i className={`dot tone-${status.tone}`} />
+                  <span className="other-name">{other.name}</span>
+                  <span className="other-reason">
+                    {other.evaluation.status === "eligible"
+                      ? `Also viable · ranked #${rank + 1} · ${formatMoney(other.evaluation.totalCents)}`
+                      : status.note ?? status.label}
+                    {changedFacts(other, mission.evidence).length > 0 && (
+                      <em className="other-changed">
+                        {" "}
+                        · changed after their first reply
+                      </em>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        <div className="decide">
+          {decision ? (
+            <StatusPill tone={decision.decision === "approved" ? "verified" : "ineligible"}>
+              {decision.decision === "approved" ? "Approved" : "Declined"}
+            </StatusPill>
+          ) : (
+            <>
               <button
-                className="button primary"
-                disabled={
-                  Boolean(pending) ||
-                  recommendation.evidenceVersion !== mission.evidenceVersion
-                }
+                className="button approve large"
+                disabled={Boolean(pending) || stale}
                 onClick={() =>
                   void send(
-                    {
-                      type: "approve",
-                      recommendationVersion: recommendation.version,
-                    },
+                    { type: "approve", recommendationVersion: recommendation.version },
                     "approve recommendation",
                   )
                 }
               >
-                <Icon name="approval" /> Approve vendor
+                <Icon name="check" />
+                {pending === "approve recommendation" ? "Approving…" : "Approve"}
               </button>
               <button
-                className="button secondary"
+                className="button quiet"
                 disabled={Boolean(pending)}
                 onClick={() =>
                   void send(
-                    {
-                      type: "reject",
-                      recommendationVersion: recommendation.version,
-                    },
+                    { type: "reject", recommendationVersion: recommendation.version },
                     "reject recommendation",
                   )
                 }
               >
-                Reject
+                Not this one
               </button>
-              <small>Approval is persisted as a versioned decision.</small>
-            </div>
+              {stale ? (
+                <p className="stale">
+                  <Icon name="alert" size={15} /> New info arrived after this
+                  recommendation. Somebody needs to re-check before you decide.
+                </p>
+              ) : (
+                <p className="decide-note">
+                  After you approve, Somebody confirms {vendor.name}, lets the
+                  other vendors know, and raises the purchase order. No payment
+                  is made.
+                </p>
+              )}
+            </>
           )}
         </div>
-      ) : (
-        <p className="empty-copy">
-          The worker will return here after it has enough current, comparable
-          evidence. Any vendor commitment or purchase order remains blocked
-          until approval is persisted.
-        </p>
-      )}
+      </div>
     </section>
   );
 }
 
-function Effects({ mission }: { mission: Mission }) {
-  const finalEffects = mission.effects;
+// ── Follow-through & proof ──────────────────────────────────────────────────
+
+const STATUS_ORDER: Effect["status"][] = ["pending", "attempted", "unverified", "verified"];
+function weakest(effects: Effect[]): Effect | null {
   return (
-    <section className="panel effects-panel" id="proof">
-      <div className="section-heading">
-        <div>
-          <span className="eyebrow">05 · Effect proof</span>
-          <h2>Attempted is not complete</h2>
-        </div>
-        <span className="section-note">
-          {finalEffects.filter((effect) => effect.status === "verified").length}
-          /{finalEffects.length} verified
+    [...effects].sort(
+      (a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status),
+    )[0] ?? null
+  );
+}
+
+function ProofChecklist({ mission }: { mission: Mission }) {
+  const winnerId = selectedVendorId(mission) ?? mission.recommendation?.vendorId;
+  const winner = mission.vendors.find((v) => v.id === winnerId);
+  const confirmations = mission.effects.filter((e) => e.kind === "confirmation");
+  const rejections = mission.effects.filter((e) => e.kind === "rejection");
+  const orders = mission.effects.filter((e) => e.kind === "purchase_order");
+  const outreach = mission.effects.filter((e) => !e.gated);
+  const others = `${rejections.length} other ${rejections.length === 1 ? "vendor" : "vendors"}`;
+  const items = [
+    {
+      icon: "mail" as IconName,
+      todo: `Confirm the order with ${winner?.name ?? "the vendor"}`,
+      done: `Order confirmed with ${winner?.name ?? "the vendor"}`,
+      effects: confirmations,
+    },
+    {
+      icon: "chat" as IconName,
+      todo: `Let ${others} know politely`,
+      done: `${others} closed out politely`,
+      effects: rejections,
+    },
+    {
+      icon: "ledger" as IconName,
+      todo: "Raise the purchase order and read it back",
+      done: "Purchase order raised and read back from accounting",
+      effects: orders,
+    },
+    {
+      icon: "search" as IconName,
+      todo: `Deliver ${outreach.length} quote requests and follow-ups`,
+      done: `${outreach.length} quote requests and follow-ups delivered`,
+      effects: outreach,
+    },
+  ].filter((item) => item.effects.length > 0);
+  if (!items.length) return null;
+  return (
+    <ul className="proof-list">
+      {items.map((item) => {
+        const low = weakest(item.effects)!;
+        const copy = effectCopy(low, mission);
+        const receipt = item.effects.find((e) => e.receiptId)?.receiptId;
+        return (
+          <li key={item.done} className={`proof tone-${copy.tone}`}>
+            <span className="proof-mark">
+              <Icon name={low.status === "verified" ? "check" : item.icon} size={16} />
+            </span>
+            <span className="proof-title">
+              {low.status === "verified" ? item.done : item.todo}
+            </span>
+            <span className="proof-state">
+              <StatusPill tone={copy.tone}>{copy.label}</StatusPill>
+              {low.status === "verified" && receipt && (
+                <small className="mono">receipt {receipt.slice(-8)}</small>
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function DonePanel({ mission }: { mission: Mission }) {
+  const winner = mission.vendors.find(
+    (v) => v.id === (selectedVendorId(mission) ?? mission.recommendation?.vendorId),
+  );
+  const lastVerified = Math.max(0, ...mission.effects.map((e) => e.verifiedAt ?? 0));
+  return (
+    <section className="now-panel done-panel tone-verified">
+      <Mascot pose="done" size="lg" />
+      <div className="now-copy">
+        <span className="stamp">
+          <Icon name="check" size={16} /> Done and verified
         </span>
-      </div>
-      {finalEffects.length === 0 ? (
-        <p className="empty-copy">
-          Post-approval effects will appear here with their attempt and
-          verification state.
+        <h2>
+          {winner
+            ? `${winner.name} is confirmed for ${mission.recommendation?.orderQuantity ?? mission.requirements.quantity} gifts at ${formatMoney(mission.recommendation?.totalCents)}.`
+            : "The job is done."}
+        </h2>
+        <p>
+          {winner && `Arriving ${formatDate(winner.evaluation.quote.deliveryAt)}. `}
+          Somebody read back every action to check it actually happened
+          {lastVerified ? ` · last checked ${formatClock(lastVerified)}` : ""}.
         </p>
-      ) : (
-        <div className="effect-list">
-          {finalEffects.map((effect) => (
-            <EffectRow key={effect.key} effect={effect} />
-          ))}
-        </div>
-      )}
+        <ProofChecklist mission={mission} />
+      </div>
     </section>
   );
 }
-function EffectRow({ effect }: { effect: Effect }) {
+
+function FollowThrough({ mission }: { mission: Mission }) {
+  if (!mission.effects.length) return null;
+  const verified = mission.effects.filter((e) => e.status === "verified").length;
+  const groups = [
+    { title: "After your approval", effects: mission.effects.filter((e) => e.gated) },
+    { title: "Outreach", effects: mission.effects.filter((e) => !e.gated) },
+  ].filter((group) => group.effects.length);
   return (
-    <div className={`effect-row ${effect.status}`}>
-      <span className="effect-icon">
-        <Icon name={effect.status === "verified" ? "approval" : "clock"} />
-      </span>
-      <div>
-        <strong>{titleCase(effect.kind)}</strong>
-        <span>
-          {effect.targetId} · {effect.endpointRef}
-        </span>
+    <section className="section" id="proof">
+      <SectionHead
+        kicker="Every message and record"
+        title="Sent is not the same as done"
+        aside={
+          <span className="section-note">
+            {verified} of {mission.effects.length} checked after sending
+          </span>
+        }
+      />
+      <div className="effects-card">
+        {groups.map((group) => (
+          <div key={group.title} className="effect-group">
+            <h3>
+              {group.title === "After your approval" && <Icon name="lock" size={14} />}
+              {group.title}
+            </h3>
+            {group.effects.map((effect) => {
+              const copy = effectCopy(effect, mission);
+              const vendor = mission.vendors.find((v) => v.id === effect.targetId);
+              return (
+                <div key={effect.key} className={`effect-row tone-${copy.tone}`}>
+                  <span className="effect-icon">
+                    <Icon
+                      name={
+                        effect.kind === "purchase_order"
+                          ? "ledger"
+                          : vendor
+                            ? CHANNEL_ICON[vendor.channel]
+                            : "mail"
+                      }
+                      size={16}
+                    />
+                  </span>
+                  <span className="effect-text">
+                    <strong>{copy.title}</strong>
+                    <span>{copy.target}</span>
+                  </span>
+                  <span className="effect-state">
+                    <StatusPill tone={copy.tone}>{copy.label}</StatusPill>
+                    {effect.receiptId ? (
+                      <small className="mono" title={effect.receiptId}>
+                        receipt {effect.receiptId.slice(-8)}
+                      </small>
+                    ) : effect.attempts > 1 ? (
+                      <small>{effect.attempts} attempts · one effect</small>
+                    ) : null}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
-      <div className="effect-proof">
-        <span
-          className={`status-chip ${effect.status === "verified" ? "good" : "warning"}`}
-        >
-          {titleCase(effect.status)}
-        </span>
-        <small>
-          {effect.receiptId
-            ? `Receipt ${effect.receiptId}`
-            : `${effect.attempts} attempt${effect.attempts === 1 ? "" : "s"}`}
-        </small>
-      </div>
+    </section>
+  );
+}
+
+// ── Activity ────────────────────────────────────────────────────────────────
+
+function ActivityLog({ events }: { events: MissionView["events"] }) {
+  return (
+    <aside className="activity">
+      <SectionHead
+        kicker="Activity"
+        title="Everything, in order"
+        aside={<span className="count">{events.length}</span>}
+      />
+      {events.length === 0 ? (
+        <p className="muted">Nothing yet.</p>
+      ) : (
+        <ol className="timeline">
+          {events.slice(0, 24).map((event, index) => {
+            const copy = eventCopy(event.kind);
+            return (
+              <li key={`${event.at}-${index}`} className={`tone-${copy.tone}`}>
+                <i className="timeline-dot" />
+                <div>
+                  <span className="timeline-meta">
+                    <strong>{copy.label}</strong> · {formatClock(event.at)}
+                  </span>
+                  <p title={event.text}>{humanize(event.text)}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </aside>
+  );
+}
+
+// ── Small parts ─────────────────────────────────────────────────────────────
+
+function NewJobModal({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (request: string) => void;
+}) {
+  const [request, setRequest] = useState(DEFAULT_REQUEST);
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <form
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-job-title"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onCreate(request);
+        }}
+      >
+        <span className="kicker">New job</span>
+        <h2 id="new-job-title">What needs handling?</h2>
+        <textarea
+          aria-label="Job request"
+          rows={5}
+          value={request}
+          onChange={(event) => setRequest(event.target.value)}
+          required
+        />
+        <div className="modal-actions">
+          <button className="button quiet" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="button primary" disabled={!request.trim()}>
+            Give Somebody the job <Icon name="arrow" size={16} />
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
 
-function DevelopmentControls({
-  mission,
-  liveAiEnabled,
-  send,
-  pending,
-}: {
-  mission: Mission;
-  liveAiEnabled: boolean;
-  send: (command: Command, label?: string) => Promise<void>;
-  pending: string | null;
-}) {
-  const [clarifyVendor, setClarifyVendor] = useState(
-    mission.vendors[0]?.id ?? "",
-  );
-  const [clarification, setClarification] = useState(
-    "Please confirm the delivery date, landed cost, stock, and branding requirement.",
-  );
-  const [recommendVendor, setRecommendVendor] = useState(
-    mission.vendors.find((v) => v.evaluation.status === "eligible")?.id ?? "",
-  );
-  const [rationale, setRationale] = useState(
-    "Best current fit across delivery, budget, availability, and branding constraints.",
-  );
-  const eligible = useMemo(
-    () =>
-      mission.vendors.filter(
-        (vendor) => vendor.evaluation.status === "eligible",
-      ),
-    [mission.vendors],
-  );
-  const executable = mission.effects.filter(
-    (effect) => effect.status === "pending",
-  );
-  const verifiable = mission.effects.filter(
-    (effect) => effect.status === "attempted" || effect.status === "unverified",
-  );
-  return (
-    <details className="dev-controls">
-      <summary>
-        <span>
-          <strong>Development controls</strong>
-          <small>Exercise the fixture workflow and reliability gates</small>
-        </span>
-        <span className="fixture-tag">Fixtures only</span>
-      </summary>
-      <div className="dev-body">
-        <div className="fixture-warning">
-          These controls persist Development data. Communication and
-          purchase-order effects are simulated fixtures; they do not call
-          external providers.
-        </div>
-        <div className="control-group">
-          <div>
-            <h3>Worker</h3>
-            <p>
-              Ask the configured model to inspect current state and choose its
-              next tool.
-            </p>
-          </div>
-          <button
-            className="button primary"
-            disabled={Boolean(pending) || !liveAiEnabled}
-            onClick={() => void send({ type: "run_agent" }, "run agent")}
-          >
-            {pending === "run agent" ? "Running…" : "Run Procurement Agent"}
-          </button>
-          {!liveAiEnabled && (
-            <small className="disabled-note">
-              Enable <code>LIVE_AI_ENABLED=true</code> on the server to run a
-              live model deliberately.
-            </small>
-          )}
-        </div>
-        <div className="control-group">
-          <div>
-            <h3>Request fixture quotes</h3>
-            <p>
-              Create deterministic sourcing intents. Evidence arrives separately
-              through the inbound observation contract.
-            </p>
-          </div>
-          <div className="button-row">
-            {mission.vendors.map((vendor) => (
-              <button
-                className="button tertiary"
-                disabled={Boolean(pending)}
-                key={vendor.id}
-                onClick={() =>
-                  void send(
-                    { type: "request_quote", vendorId: vendor.id },
-                    `request ${vendor.name}`,
-                  )
-                }
-              >
-                {channelMark(vendor.channel)} {vendor.name}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="control-group">
-          <div>
-            <h3>Ingest fixture observations</h3>
-            <p>
-              Deliver Development evidence through the same ingest contract
-              future Gmail, Unipile, and web adapters will use.
-            </p>
-          </div>
-          <div className="button-row">
-            {mission.vendors.map((vendor) => (
-              <button
-                className="button tertiary"
-                disabled={Boolean(pending)}
-                key={`obs-${vendor.id}`}
-                onClick={() =>
-                  void send(
-                    {
-                      type: "ingest_fixture_observation",
-                      vendorId: vendor.id,
-                      stage: "initial",
-                    },
-                    `observe ${vendor.name}`,
-                  )
-                }
-              >
-                Observe {vendor.name}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="control-group">
-          <div>
-            <h3>Ingest an authoritative update</h3>
-            <p>
-              Later evidence for any configured vendor. History is kept; stale
-              claims are superseded.
-            </p>
-          </div>
-          <div className="button-row">
-            {mission.vendors.map((vendor) => (
-              <button
-                className="button tertiary"
-                disabled={Boolean(pending)}
-                key={`upd-${vendor.id}`}
-                onClick={() =>
-                  void send(
-                    {
-                      type: "ingest_fixture_observation",
-                      vendorId: vendor.id,
-                      stage: "update",
-                    },
-                    `update ${vendor.name}`,
-                  )
-                }
-              >
-                Update {vendor.name}
-              </button>
-            ))}
-          </div>
-        </div>
-        <form
-          className="control-group control-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void send(
-              {
-                type: "clarify_quote",
-                vendorId: clarifyVendor,
-                question: clarification,
-              },
-              "clarify quote",
-            );
-          }}
-        >
-          <div>
-            <h3>Clarify a quote</h3>
-            <p>
-              Record a targeted follow-up against a deterministic vendor
-              identity.
-            </p>
-          </div>
-          <label>
-            Vendor
-            <select
-              value={clarifyVendor}
-              onChange={(event) => setClarifyVendor(event.target.value)}
-            >
-              {mission.vendors.map((vendor) => (
-                <option value={vendor.id} key={vendor.id}>
-                  {vendor.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grow">
-            Question
-            <input
-              value={clarification}
-              onChange={(event) => setClarification(event.target.value)}
-              required
-            />
-          </label>
-          <button
-            className="button tertiary"
-            disabled={Boolean(pending) || !clarifyVendor}
-          >
-            Queue clarification
-          </button>
-          <button
-            className="button tertiary"
-            type="button"
-            disabled={Boolean(pending) || !clarifyVendor}
-            onClick={() =>
-              void send(
-                {
-                  type: "ingest_fixture_observation",
-                  vendorId: clarifyVendor,
-                  stage: "clarification",
-                },
-                "observe clarification",
-              )
-            }
-          >
-            Observe clarification
-          </button>
-        </form>
-        <form
-          className="control-group control-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void send(
-              { type: "recommend", vendorId: recommendVendor, rationale },
-              "create recommendation",
-            );
-          }}
-        >
-          <div>
-            <h3>Recommend</h3>
-            <p>Only vendors the domain layer marks eligible can be selected.</p>
-          </div>
-          <label>
-            Eligible vendor
-            <select
-              value={recommendVendor}
-              onChange={(event) => setRecommendVendor(event.target.value)}
-              required
-            >
-              <option value="">Choose…</option>
-              {eligible.map((vendor) => (
-                <option value={vendor.id} key={vendor.id}>
-                  {vendor.name} · {formatMoney(vendor.evaluation.totalCents)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grow">
-            Rationale
-            <input
-              value={rationale}
-              onChange={(event) => setRationale(event.target.value)}
-              required
-            />
-          </label>
-          <button
-            className="button tertiary"
-            disabled={Boolean(pending) || !recommendVendor}
-          >
-            Recommend
-          </button>
-          <button
-            className="button tertiary"
-            type="button"
-            disabled={Boolean(pending) || !mission.ranking?.noViableOption}
-            onClick={() =>
-              void send(
-                {
-                  type: "record_no_viable_option",
-                  reason:
-                    "Every fully evaluated supplier fails a hard constraint.",
-                },
-                "record no viable option",
-              )
-            }
-          >
-            Record no viable option
-          </button>
-        </form>
-        {(executable.length > 0 || verifiable.length > 0) && (
-          <div className="control-group">
-            <div>
-              <h3>Effect lifecycle</h3>
-              <p>
-                Execute and independently verify each logical effect. Retries
-                reuse the same key.
-              </p>
-            </div>
-            <div className="effect-controls">
-              {executable.map((effect) => (
-                <button
-                  className="button tertiary"
-                  disabled={Boolean(pending)}
-                  key={effect.key}
-                  onClick={() =>
-                    void send(
-                      { type: "execute_effect", effectKey: effect.key },
-                      `execute ${effect.kind}`,
-                    )
-                  }
-                >
-                  Execute {titleCase(effect.kind)}
-                </button>
-              ))}
-              {verifiable.map((effect) => (
-                <button
-                  className="button tertiary"
-                  disabled={Boolean(pending)}
-                  key={effect.key}
-                  onClick={() =>
-                    void send(
-                      { type: "verify_effect", effectKey: effect.key },
-                      `verify ${effect.kind}`,
-                    )
-                  }
-                >
-                  Verify {titleCase(effect.kind)}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="control-group">
-          <div>
-            <h3>Completion gate</h3>
-            <p>
-              Attempt completion. Domain policy will fail closed until every
-              required effect is verified.
-            </p>
-          </div>
-          <button
-            className="button tertiary"
-            disabled={Boolean(pending)}
-            onClick={() =>
-              void send({ type: "complete_mission" }, "complete mission")
-            }
-          >
-            Check completion
-          </button>
-        </div>
-      </div>
-    </details>
-  );
-}
-
-function Notice({
-  notice,
-}: {
-  notice: { kind: "ok" | "error"; text: string };
-}) {
+function Notice({ notice }: { notice: { kind: "ok" | "error"; text: string } }) {
   return (
     <div className={`notice ${notice.kind}`} role="status">
+      <Icon name={notice.kind === "ok" ? "check" : "alert"} size={16} />
       {notice.text}
     </div>
   );
