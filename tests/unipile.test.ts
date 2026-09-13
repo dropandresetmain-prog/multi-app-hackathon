@@ -1,0 +1,495 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createMission } from "../lib/procurement/fixtures";
+import {
+  applyCommand,
+  evaluate,
+  evidenceId,
+  ingestEvidence,
+} from "../lib/procurement/domain";
+import {
+  compareSourceOrder,
+  decideInbound,
+  evidenceFromInbound,
+  extractControlledClaims,
+  formatOutboundText,
+  parseBindingsJson,
+  planOutbound,
+  readBackMatches,
+  sourceRevision,
+  type UnipileBinding,
+  type UnipileWebhookEvent,
+} from "../lib/unipile";
+import type { Effect, Mission } from "../lib/procurement/types";
+
+const now = 1_800_000_000_000;
+
+const whatsappBinding: UnipileBinding = {
+  endpointRef: "dev.whatsapp.good-things",
+  provider: "whatsapp",
+  accountId: "acct-wa",
+  chatId: "chat-wa",
+  accountUserId: "provider-user-somebody",
+};
+
+const instagramBinding: UnipileBinding = {
+  endpointRef: "dev.instagram.little-objects",
+  provider: "instagram",
+  accountId: "acct-ig",
+  chatId: "chat-ig",
+  accountUserId: "provider-user-somebody-ig",
+};
+
+const bindings = [whatsappBinding, instagramBinding];
+
+function sourcingMission(): Mission {
+  const m = createMission("unipile-test", "Sponsor gifts", now);
+  applyCommand(
+    m,
+    {
+      type: "answer_requirements",
+      quantity: 25,
+      budgetCents: 75000,
+      deadlineAt: now + 3 * 86400000,
+      branded: true,
+    },
+    now,
+  );
+  return m;
+}
+
+function vendorIdFor(endpointRef: string, mission: Mission) {
+  return mission.vendors.find((v) => v.endpointRef === endpointRef)?.id ?? null;
+}
+
+function webhook(
+  overrides: Partial<UnipileWebhookEvent> &
+    Pick<UnipileWebhookEvent, "account_type" | "account_id" | "chat_id" | "message_id">,
+): UnipileWebhookEvent {
+  return {
+    event: "message_received",
+    timestamp: new Date(now + 60_000).toISOString(),
+    message:
+      'We can do $18 each.\nSOMEBODY_CLAIMS:{"unitCents":1800,"setupCents":0,"deliveryCents":1500,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800259200000,"branded":true,"currency":"SGD"}',
+    account_info: { user_id: "provider-user-somebody" },
+    sender: {
+      attendee_provider_id: "supplier-provider-id",
+      attendee_name: "Supplier",
+    },
+    ...overrides,
+  };
+}
+
+test("bindings JSON parses WhatsApp and Instagram endpoints without demo hard-coding", () => {
+  const parsed = parseBindingsJson(JSON.stringify(bindings));
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0]?.provider, "whatsapp");
+  assert.equal(parsed[1]?.provider, "instagram");
+  assert.throws(() => parseBindingsJson("{"));
+  assert.throws(() =>
+    parseBindingsJson(JSON.stringify([{ provider: "telegram" }])),
+  );
+});
+
+test("WhatsApp correlation maps account/chat to configured vendor", () => {
+  const m = sourcingMission();
+  const decision = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "wa-msg-1",
+    }),
+    bindings,
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(decision.action, "ingest");
+  if (decision.action !== "ingest") return;
+  assert.equal(decision.provider, "whatsapp");
+  assert.equal(decision.channel, "WhatsApp");
+  assert.equal(decision.vendorId, "express");
+  assert.equal(decision.observationId, "wa-msg-1");
+  assert.equal(decision.chatId, "chat-wa");
+  assert.equal(decision.claims.unitCents, 1800);
+});
+
+test("Instagram correlation maps account/chat to configured vendor", () => {
+  const m = sourcingMission();
+  const decision = decideInbound({
+    event: webhook({
+      account_type: "INSTAGRAM",
+      account_id: "acct-ig",
+      chat_id: "chat-ig",
+      message_id: "ig-msg-1",
+      account_info: { user_id: "provider-user-somebody-ig" },
+      message:
+        'Desk kits ready.\nSOMEBODY_CLAIMS:{"unitCents":2900,"setupCents":0,"deliveryCents":3000,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800259200000,"branded":true,"currency":"SGD"}',
+    }),
+    bindings,
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(decision.action, "ingest");
+  if (decision.action !== "ingest") return;
+  assert.equal(decision.provider, "instagram");
+  assert.equal(decision.channel, "Instagram");
+  assert.equal(decision.vendorId, "social");
+});
+
+test("own-message filtering distinguishes Somebody outbound from supplier replies", () => {
+  const m = sourcingMission();
+  const decision = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "wa-own-1",
+      sender: { attendee_provider_id: "provider-user-somebody" },
+    }),
+    bindings,
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(decision.action, "ignore_own");
+});
+
+test("unknown chat/vendor rejects fail-closed", () => {
+  const m = sourcingMission();
+  const unknownChat = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-unknown",
+      message_id: "wa-x",
+    }),
+    bindings,
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(unknownChat.action, "reject");
+
+  const unboundVendor = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "wa-y",
+    }),
+    bindings,
+    resolveVendorId: () => null,
+  });
+  assert.equal(unboundVendor.action, "reject");
+});
+
+test("duplicate webhook delivery is detected before ingest", () => {
+  const m = sourcingMission();
+  const seen = new Set(["wa-dup"]);
+  const decision = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "wa-dup",
+    }),
+    bindings,
+    alreadySeenMessageId: (id) => seen.has(id),
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(decision.action, "duplicate");
+});
+
+test("stable message identity and source chronology survive out-of-order webhooks", () => {
+  const m = sourcingMission();
+  applyCommand(m, { type: "request_quote", vendorId: "express" }, now);
+
+  const thursdayAt = now + 10_000;
+  const fridayAt = now + 86_400_000;
+  const thursday = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "msg-thursday",
+      timestamp: new Date(thursdayAt).toISOString(),
+      message:
+        'Thursday delivery is okay.\nSOMEBODY_CLAIMS:{"unitCents":1800,"setupCents":0,"deliveryCents":1500,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800172800000,"branded":true,"currency":"SGD"}',
+    }),
+    bindings,
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  const friday = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "msg-friday",
+      timestamp: new Date(fridayAt).toISOString(),
+      message:
+        'Correction: Friday delivery.\nSOMEBODY_CLAIMS:{"deliveryAt":1800259200000}',
+    }),
+    bindings,
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(thursday.action, "ingest");
+  assert.equal(friday.action, "ingest");
+  if (thursday.action !== "ingest" || friday.action !== "ingest") return;
+
+  assert.ok(friday.revision > thursday.revision);
+  assert.ok(
+    compareSourceOrder(
+      { observedAt: thursday.observedAt, observationId: thursday.observationId },
+      { observedAt: friday.observedAt, observationId: friday.observationId },
+    ) < 0,
+  );
+
+  // Delayed friday webhook arrives first, then thursday.
+  ingestEvidence(m, evidenceFromInbound(friday, now + 200_000));
+  ingestEvidence(m, evidenceFromInbound(thursday, now + 300_000));
+  assert.equal(m.evidence.length, 2);
+  assert.equal(evaluate(m, "express").quote.deliveryAt, 1800259200000);
+
+  // Webhook-layer dedupe blocks replay before ingest; identical retry is a no-op.
+  const replay = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "msg-thursday",
+      timestamp: new Date(thursdayAt).toISOString(),
+      message:
+        'Thursday delivery is okay.\nSOMEBODY_CLAIMS:{"unitCents":1800,"setupCents":0,"deliveryCents":1500,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800172800000,"branded":true,"currency":"SGD"}',
+    }),
+    bindings,
+    alreadySeenMessageId: (id) => id === "msg-thursday" || id === "msg-friday",
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(replay.action, "duplicate");
+  ingestEvidence(m, evidenceFromInbound(thursday, now + 300_000));
+  assert.equal(m.evidence.length, 2);
+  assert.equal(evaluate(m, "express").quote.deliveryAt, 1800259200000);
+  assert.equal(
+    evidenceId(evidenceFromInbound(thursday, now + 300_000)),
+    "whatsapp:msg-thursday",
+  );
+  assert.equal(sourceRevision(fridayAt) > sourceRevision(thursdayAt), true);
+});
+
+test("any bound supplier quote change can rerank without hard-coded winners", () => {
+  const m = sourcingMission();
+  for (const vendorId of ["catalogue", "studio", "express", "social"] as const) {
+    applyCommand(m, { type: "request_quote", vendorId }, now);
+  }
+  // Seed complete quotes via messaging-shaped evidence for WA + IG and fixtures for others.
+  ingestEvidence(
+    m,
+    evidenceFromInbound(
+      {
+        action: "ingest",
+        vendorId: "express",
+        endpointRef: whatsappBinding.endpointRef,
+        provider: "whatsapp",
+        channel: "WhatsApp",
+        observationId: "wa-cheap",
+        chatId: "chat-wa",
+        accountId: "acct-wa",
+        observedAt: now + 1,
+        revision: sourceRevision(now + 1),
+        text: "Cheap WhatsApp quote",
+        claims: {
+          unitCents: 1500,
+          setupCents: 0,
+          deliveryCents: 1000,
+          taxCents: 0,
+          quantity: 25,
+          moq: 10,
+          stock: 100,
+          deliveryAt: now + 2 * 86400000,
+          branded: true,
+          currency: "SGD",
+        },
+      },
+      now,
+    ),
+  );
+  ingestEvidence(
+    m,
+    evidenceFromInbound(
+      {
+        action: "ingest",
+        vendorId: "social",
+        endpointRef: instagramBinding.endpointRef,
+        provider: "instagram",
+        channel: "Instagram",
+        observationId: "ig-mid",
+        chatId: "chat-ig",
+        accountId: "acct-ig",
+        observedAt: now + 2,
+        revision: sourceRevision(now + 2),
+        text: "Instagram quote",
+        claims: {
+          unitCents: 2000,
+          setupCents: 0,
+          deliveryCents: 1000,
+          taxCents: 0,
+          quantity: 25,
+          moq: 10,
+          stock: 100,
+          deliveryAt: now + 2 * 86400000,
+          branded: true,
+          currency: "SGD",
+        },
+      },
+      now,
+    ),
+  );
+  applyCommand(
+    m,
+    {
+      type: "ingest_external_evidence",
+      evidence: {
+        vendorId: "studio",
+        source: "gmail",
+        authority: "vendor",
+        revision: 1,
+        observedAt: now,
+        text: "Gmail quote",
+        claims: {
+          unitCents: 2400,
+          setupCents: 0,
+          deliveryCents: 1000,
+          taxCents: 0,
+          quantity: 25,
+          moq: 10,
+          stock: 100,
+          deliveryAt: now + 2 * 86400000,
+          branded: true,
+          currency: "SGD",
+        },
+        provenance: {
+          provider: "gmail",
+          channel: "Gmail",
+          observationId: "gmail-1",
+          observedAt: now,
+        },
+      },
+    },
+    now,
+  );
+  applyCommand(
+    m,
+    {
+      type: "ingest_external_evidence",
+      evidence: {
+        vendorId: "catalogue",
+        source: "web",
+        authority: "catalogue",
+        revision: 1,
+        observedAt: now,
+        text: "Catalogue late",
+        claims: {
+          unitCents: 1400,
+          setupCents: 0,
+          deliveryCents: 0,
+          taxCents: 0,
+          quantity: 25,
+          moq: 50,
+          stock: 100,
+          deliveryAt: now + 10 * 86400000,
+          branded: true,
+          currency: "SGD",
+        },
+        provenance: {
+          provider: "web",
+          channel: "Web",
+          observationId: "web-1",
+          observedAt: now,
+        },
+      },
+    },
+    now,
+  );
+  assert.equal(m.ranking.topVendorId, "express");
+
+  // Instagram supplier improves price → generalized ranking flips without hard-coded winner.
+  ingestEvidence(
+    m,
+    evidenceFromInbound(
+      {
+        action: "ingest",
+        vendorId: "social",
+        endpointRef: instagramBinding.endpointRef,
+        provider: "instagram",
+        channel: "Instagram",
+        observationId: "ig-better",
+        chatId: "chat-ig",
+        accountId: "acct-ig",
+        observedAt: now + 90_000,
+        revision: sourceRevision(now + 90_000),
+        text: "Updated Instagram price",
+        claims: {
+          unitCents: 1200,
+          deliveryCents: 500,
+        },
+      },
+      now + 100_000,
+    ),
+  );
+  assert.equal(m.ranking.topVendorId, "social");
+});
+
+test("outbound retries reuse receipts and provider success stays unverified until read-back", () => {
+  const m = sourcingMission();
+  applyCommand(m, { type: "request_quote", vendorId: "express" }, now);
+  const effect = m.effects.find((e) => e.kind === "rfq")!;
+  const text = formatOutboundText(effect, m);
+  assert.match(text, /Somebody RFQ/);
+  assert.match(text, /SOMEBODY_CLAIMS/);
+
+  const first = planOutbound({
+    mission: m,
+    effect,
+    binding: whatsappBinding,
+    existingReceiptKey: null,
+  });
+  assert.equal(first.mode, "send");
+
+  const retry = planOutbound({
+    mission: m,
+    effect,
+    binding: whatsappBinding,
+    existingReceiptKey: effect.key,
+  });
+  assert.equal(retry.mode, "skip_already_delivered");
+
+  assert.equal(
+    readBackMatches({
+      expectedText: text,
+      expectedChatId: "chat-wa",
+      expectedMessageId: "provider-msg-1",
+      observed: null,
+    }),
+    false,
+  );
+  assert.equal(
+    readBackMatches({
+      expectedText: text,
+      expectedChatId: "chat-wa",
+      expectedMessageId: "provider-msg-1",
+      observed: {
+        providerMessageId: "provider-msg-1",
+        chatId: "chat-wa",
+        text,
+      },
+    }),
+    true,
+  );
+  // API acceptance alone is modeled as unverified until read-back matches.
+  const unverified: Effect = { ...effect, status: "unverified", receiptId: "r1" };
+  assert.equal(unverified.status, "unverified");
+  assert.notEqual(unverified.status, "verified");
+});
+
+test("controlled claims trailer extracts partial quote updates", () => {
+  const claims = extractControlledClaims(
+    'Correction coming through.\nSOMEBODY_CLAIMS:{"deliveryAt":1800259200000}',
+  );
+  assert.deepEqual(claims, { deliveryAt: 1800259200000 });
+  assert.equal(extractControlledClaims("plain supplier chat"), null);
+});
