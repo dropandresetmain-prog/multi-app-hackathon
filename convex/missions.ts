@@ -313,7 +313,7 @@ export const acknowledge = internalMutation({
     await log(
       ctx,
       m.key,
-      `${e.kind}: fixture adapter returned success. Read-back still required.`,
+      `${e.kind}: adapter returned success. Read-back still required.`,
       "effect",
     );
     return null;
@@ -357,12 +357,13 @@ export const verify = internalMutation({
     m.updatedAt = Date.now();
     if (args.runId && m.run) m.run.toolCalls++;
     await ctx.db.patch(found._id, { data: m });
-    await log(
-      ctx,
-      m.key,
-      `${e.kind}: verified against independent Development fixture read-back.`,
-      "effect",
-    );
-    return "Fixture effect verified";
+    const source =
+      e.kind === "purchase_order"
+        ? "independent QuickBooks read-back"
+        : "independent Development fixture read-back";
+    await log(ctx, m.key, `${e.kind}: verified against ${source}.`, "effect");
+    return e.kind === "purchase_order"
+      ? "Purchase order effect verified"
+      : "Fixture effect verified";
   },
 });

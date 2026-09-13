@@ -7,7 +7,7 @@ import type {
   Vendor,
 } from "./types";
 
-export const DEVELOPMENT_ACCOUNTING_ENDPOINT = "dev.accounting.ledger";
+export const DEVELOPMENT_ACCOUNTING_ENDPOINT = "qbo.sandbox";
 const DEVELOPMENT_ENDPOINTS: Record<string, string> = {
   catalogue: "dev.web.everyday-co",
   studio: "dev.gmail.paper-pine",
