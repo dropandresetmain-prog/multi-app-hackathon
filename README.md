@@ -50,6 +50,12 @@ Verified external state
 
 Convex is the operational source of truth for workflow state. Google Sheets is a human-readable projection, not the machine SSOT.
 
+## Working Development slice
+
+The repository now contains an OpenAI Agents SDK Procurement Agent, persisted Convex workflow/evidence/approval/effect state, and a live Mission Control workspace. Development fixtures exercise sourcing, clarification, changed evidence, recommendation, human approval, and independent effect verification. External app adapters remain later milestones.
+
+See [Development slice setup and demo](docs/DEVELOPMENT_SLICE.md) for the live `openrouter/free` gate, fixture controls, verification commands and implementation boundaries.
+
 ## Current integrations
 
 Preflighted before implementation:

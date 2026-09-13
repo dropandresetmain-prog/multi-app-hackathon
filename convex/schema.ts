@@ -1,9 +1,18 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { mission, event, receipt } from "./validators";
 
-// Foundation-only schema. The procurement / Reliability Core schema is owned by
-// the next milestone — do not extend this table for product data.
 export default defineSchema({
+  // A bounded mission aggregate makes evidence, decisions and effects atomic.
+  missions: defineTable({ key: v.string(), data: mission }).index("by_key", [
+    "key",
+  ]),
+  missionEvents: defineTable({ missionKey: v.string(), data: event }).index(
+    "by_missionKey",
+    ["missionKey"],
+  ),
+  // Independent fixture transport state. Never an external provider success claim.
+  fixtureReceipts: defineTable(receipt).index("by_key", ["key"]),
   healthProbes: defineTable({
     deploymentName: v.string(),
     note: v.string(),

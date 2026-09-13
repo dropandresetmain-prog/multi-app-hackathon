@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { ConvexClientProvider } from "./ConvexClientProvider";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Trust Issues",
-  description: "Multi-App AI Agent Hackathon — foundation shell",
+  title: "Mission Control · Trust Issues",
+  description:
+    "A persistent workspace for an autonomous procurement colleague.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: "2rem" }}>
+      <body>
         <ConvexClientProvider>{children}</ConvexClientProvider>
       </body>
     </html>

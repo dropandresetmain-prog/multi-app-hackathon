@@ -1,124 +1,50 @@
 # Active Task
 
-## Goal
-
-Ship one reliable, presentation-ready multi-app procurement workflow for the Multi-App AI Agent Hackathon.
-
-## Current phase
-
-**Foundation complete → next: Astra Reliability Core + Mission Control UI**
-
 ## Current checkpoint
 
-Founder-side integration preflights are effectively complete:
+Procurement Agent + Mission Control product slice implemented and verified on 14 September 2026.
 
-- Google Workspace — PASS
-- QuickBooks Sandbox — PASS
-- Unipile WhatsApp — PASS
-- Unipile Instagram — PASS
-- OpenRouter key ready; free-model gate pending
-- OpenAI fallback ready
-- Exa key ready
+- Branch: `codex/procurement-mission-control`.
+- Fetched base: `d93f58c3a7fcdd187f9e6e2e6f3654c363e10800`.
+- Convex: **Development `acrobatic-swan-765` only**, verified through health tooling before schema and fixture writes.
+- Reads, writes, schema changes and bounded Development fixtures allowed. Preview and Production remain NOT CREATED; unrelated projects untouched.
+- The foundation milestone is retained in Git history; current runtime/setup details are in `docs/DEVELOPMENT_SLICE.md`.
 
-The implementation repository is now the source of truth. Pre-hackathon planning remains in `wip-personal`, but stale assumptions should not be imported.
+## Completed product behavior
 
-## Critical demo spine
+- [x] One real OpenAI Agents SDK Procurement Agent, with required tool use and domain-owned stopping boundaries.
+- [x] Replaceable OpenRouter/OpenAI configuration; user-selected `openrouter/free` live-tested. `LIVE_AI_ENABLED` gates new live runs.
+- [x] Minimal role-agnostic Core Worker Contract, transitions, authorization and receipt verification.
+- [x] Procurement adapter owns quote sufficiency, explicit fees/tax, landed price, quantity/stock/MOQ/branding/deadline constraints and eligibility.
+- [x] Convex mission aggregate, append-only evidence, versioned approvals, stable effects, separate events and independent fixture transport receipts.
+- [x] Per-field authoritative evidence reconciliation preserves history and invalidates stale recommendations.
+- [x] Persisted human approval gates confirmation, rejection and accounting intent. Agent has no approval or recipient-identity tool.
+- [x] OCC-safe duplicate intent/approval/delivery handling; all emitted effects require verification before completion.
+- [x] Persisted worker lease, stale-tool fencing, bounded execution and scheduled recovery status.
+- [x] Polished Mission Control reads Convex directly; includes new mission, structured brief, vendor history, normalized comparison, approval and effect proof.
+- [x] Development controls exercise the same domain rules with live AI disabled; fixture content can be replaced separately.
 
-One vague sponsor-gift request → material clarification → Calendar/Drive context → real web vendor + Gmail + WhatsApp + Instagram sourcing → quote clarification/reconciliation → normalized comparison + Sheets projection → recommendation → human approval → vendor outcomes → QuickBooks Sandbox PO → read-back verification → completion.
+## Evidence
 
-## Critical constraints
+- [x] 14 focused tests pass, including SDK Runner tool invocation, unknown fees, hard constraints, supersession/conflicts, stale approval refusal, idempotency, endpoint restrictions, verification and local-route origin security.
+- [x] Root TypeScript and Convex TypeScript pass.
+- [x] Explicit Convex codegen/typecheck and pinned Development schema/function push pass.
+- [x] Production Next.js build passes.
+- [x] Persisted smoke passes concurrent duplicate approvals and deliveries, refused premature completion, and independent fresh-client read-back.
+- [x] Full `openrouter/free` live smoke passes: mission `live-a6dd97b0-5825-460d-b396-6118dc950a70`, 6 evidence records, 1 approval, 8 verified effects, final state complete.
+- [x] Updated domain-owned SDK stopping/required-tool path passes a further live router clarification probe.
+- [x] Browser creation and brief confirmation successfully persist state and automatically start/resume the worker; it reaches human approval with visible vendor evidence.
+- [ ] Final staged secret review and commit/push verification.
 
-- One procurement worker on the critical path.
-- Convex is the operational SSOT.
-- Human approval before vendor commitment and PO creation.
-- No payment automation.
-- No model-invented recipient endpoints.
-- Application code owns state transitions.
-- Retry-safe/idempotent side effects.
-- Tool success is not completion; external verification is required.
-- `LIVE_AI_ENABLED=true|false` from the first runtime milestone.
-- Prefer free OpenRouter; OpenAI fallback only if necessary.
-- Instagram is intended in the main path but may be cut if it materially threatens completion.
-- STT is P1; TTS is P2.
+## Limitations / review decisions
 
-## Completed milestone — pre-Astra foundation (2026-09-14)
+- **Ignore / Accept Risk:** Free-router availability and model choice vary. A complete live proof passed; explicit resume and persisted failures are available. Deferring a dedicated model benchmark risks demo latency, not bypassing gates.
+- **Park for Later:** External integrations, unstructured extraction and production auth are intentionally absent. Use synthetic Development data; public read access is not suitable for sensitive live procurement. Real effects require provider-specific idempotency and read-back implementations.
+- **Park for Later:** New evidence after approval freezes the mission. A safe human reconciliation/re-approval flow after a possible commitment is deliberately not improvised here; start another fixture for further demos.
+- No payment automation, additional agents, public deployment or new Convex environments.
 
-Branch `chore/bootstrap-convex-foundation`.
+## Exact next task
 
-- [x] Reconciled migrated planning docs against `wip-personal` (provisional name, clean-sheet rule, ≥3 genuine apps, Instagram main path, no `DEMO_MODE`).
-- [x] Minimal Next.js + TypeScript + React + Convex scaffold (no product UI; root shell shows Convex health only).
-- [x] `.gitignore` excludes `.env` / `.env.*` (except `.env.example`); `.env.example` has names only, `LIVE_AI_ENABLED=false`.
-- [x] Convex project `dropandreset-main:multi-app-hackathon` created.
-- [x] Development deployment: **`acrobatic-swan-765`** (`dev/dropandreset-main`).
-- [x] Preview: **NOT CREATED**. Production: **NOT CREATED**.
-- [x] `docs/ENVIRONMENTS.md` + `AGENTS.md` deployment-safety invariant.
-- [x] Health surface `convex/health.ts`: public `status` query + internal, deployment-guarded probe mutations.
-- [x] Dev proof: schema push → bounded write → independent read-back (function + data browser) → mismatch refusal → cleanup (table empty).
-- [x] `npm install`, `tsc --noEmit` (root + convex), `convex codegen`, `next build`, `next dev` page rendering live Convex health — all pass.
+Use a **fresh chat** for the Google Workspace sourcing lane. Read PROJECT_BRIEF.md, docs/ENVIRONMENTS.md and docs/DEVELOPMENT_SLICE.md. Implement real Calendar/Drive context, deterministic controlled Gmail vendor bindings, RFQ/reply/clarification with provider message identity and read-back, and the Sheets comparison projection. Preserve the existing domain/approval/effect gates and Convex SSOT. Prove duplicate and out-of-order replies plus ambiguous send recovery. Exclude Unipile, QuickBooks, payments, auth product work and public deployment from that lane.
 
-## Next milestone — Astra lane (Reliability Core + Mission Control)
-
-Convex target for this lane: **Development `acrobatic-swan-765` only**. Preview/Production stay untouched.
-
-- [ ] Add non-secret `LIVE_AI_ENABLED` runtime handling beyond the health surface.
-- [ ] Define minimum Core Worker Contract needed by the demo.
-- [ ] Define procurement workflow and vendor state machines.
-- [ ] Define minimum Convex schema for request/vendor/evidence/communication/approval/effect/event state (replace/retire `healthProbes` only if it gets in the way).
-- [ ] Implement effect/idempotency ledger sufficient for critical side effects.
-- [ ] Implement approval enforcement.
-- [ ] Implement evidence versioning/reconciliation sufficient for later vendor claims to supersede stale claims.
-- [ ] Implement verification semantics so unverified effects cannot become complete.
-- [ ] Build Mission Control UI from persisted Convex state.
-- [ ] Add focused tests for core invariants (choose a light test runner; none exists yet).
-- [ ] Prove local build/typecheck/tests.
-- [ ] Commit/push one meaningful checkpoint.
-
-## Minimum Reliability Core tests
-
-- [ ] Incomplete required quote fields cannot become comparable/ready.
-- [ ] Hard deadline failure makes a cheaper vendor ineligible.
-- [ ] Later authoritative vendor evidence supersedes stale earlier evidence without erasing history.
-- [ ] Vendor commitment cannot execute before persisted approval.
-- [ ] Duplicate approval/action retries do not duplicate effects.
-- [ ] Duplicate PO intent produces one logical accounting effect.
-- [ ] API success without read-back verification cannot mark workflow complete.
-- [ ] Wrong/unknown vendor endpoint cannot be invented by the model/runtime.
-
-## Next integration milestones after Astra foundation
-
-- [ ] Google Workspace adapter: Calendar/Drive context + Gmail + Sheets projection.
-- [ ] Unipile adapter + Convex webhook for WhatsApp and Instagram.
-- [ ] QuickBooks Sandbox adapter + create/read-back verification.
-- [ ] Web search/catalogue adapter using native web search or Exa boundary.
-- [ ] Select and prove free OpenRouter model; wire OpenAI fallback only if needed.
-- [ ] Add STT only after critical workflow is stable.
-
-## Storyline work still open
-
-- [ ] Freeze exact event story/date/venue/guest count.
-- [ ] Freeze exact gift category/product request.
-- [ ] Freeze budget and hard/preferred constraints.
-- [ ] Select exact real web Vendor A/catalogue page.
-- [ ] Freeze controlled Vendor B/C/D initial replies and clarification replies.
-- [ ] Freeze semantic contradiction/stale-evidence moment.
-- [ ] Freeze final recommendation outcome.
-- [ ] Script exact two-minute demo.
-
-## Completion gate
-
-Do not call the core milestone complete because code exists.
-
-PASS requires:
-
-1. named Convex deployment verified (Development `acrobatic-swan-765`);
-2. schema/runtime/UI compile;
-3. focused reliability tests pass;
-4. Mission Control renders persisted state;
-5. invalid approval/effect transitions fail closed;
-6. idempotency tests pass;
-7. known limitations recorded;
-8. checkpoint committed and pushed.
-
-## Current next action
-
-Start the Astra Reliability Core + Mission Control lane on Development `acrobatic-swan-765`, while product/storyline work freezes the exact vendor fixture in parallel.
+Start with `lib/procurement/domain.ts`, `lib/procurement/fixtures.ts`, `lib/agent/procurement.ts`, `convex/missions.ts` and `convex/effectAdapter.ts`. Do not redesign the workflow or introduce an agent framework.

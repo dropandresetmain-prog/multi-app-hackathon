@@ -8,7 +8,13 @@
  * @module
  */
 
+import type * as agent from "../agent.js";
+import type * as effectAdapter from "../effectAdapter.js";
+import type * as environment from "../environment.js";
+import type * as gateway from "../gateway.js";
 import type * as health from "../health.js";
+import type * as missions from "../missions.js";
+import type * as validators from "../validators.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +23,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agent: typeof agent;
+  effectAdapter: typeof effectAdapter;
+  environment: typeof environment;
+  gateway: typeof gateway;
   health: typeof health;
+  missions: typeof missions;
+  validators: typeof validators;
 }>;
 
 /**
