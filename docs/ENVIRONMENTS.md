@@ -32,6 +32,10 @@ Verified 2026-09-14 by independent read of the Convex management API: the projec
 | Name | Set on | Purpose |
 | --- | --- | --- |
 | `HEALTH_PROBE_WRITES_ENABLED=true` | `acrobatic-swan-765` only | Allows the internal health-probe mutations. Must never be set on Preview/Production. |
+| `DEVELOPMENT_ACCESS_TOKEN` | `acrobatic-swan-765` + local server | Random server-only capability for Development commands; never exposed in client code. |
+| `LIVE_AI_ENABLED=true` | `acrobatic-swan-765` | Deliberately enabled and live-tested for this slice; set false to prevent new live runs. |
+| `AI_PROVIDER=openrouter`, `AI_MODEL=openrouter/free` | `acrobatic-swan-765` | User-selected free model router. |
+| `OPENROUTER_API_KEY` | `acrobatic-swan-765` | Existing provider credential; value is never recorded here. |
 
 ## Pinning the target
 
