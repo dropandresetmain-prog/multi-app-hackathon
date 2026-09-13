@@ -67,7 +67,9 @@ export type InboundDecision =
       observedAt: number;
       revision: number;
       text: string;
+      /** May be empty when the supplier message has no extractable quote claims. */
       claims: Partial<Quote>;
+      extractionPath?: string;
     };
 
 export const providerChannel: Record<UnipileProvider, Channel> = {

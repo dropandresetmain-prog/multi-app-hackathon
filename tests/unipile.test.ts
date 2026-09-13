@@ -12,10 +12,13 @@ import {
   decideInbound,
   evidenceFromInbound,
   extractControlledClaims,
+  extractNaturalLanguageClaims,
   formatOutboundText,
+  normalizeSupplierClaims,
   parseBindingsJson,
   planOutbound,
   readBackMatches,
+  resolveWeekdayDeliveryAt,
   sourceRevision,
   type UnipileBinding,
   type UnipileWebhookEvent,
@@ -70,7 +73,7 @@ function webhook(
     event: "message_received",
     timestamp: new Date(now + 60_000).toISOString(),
     message:
-      'We can do $18 each.\nSOMEBODY_CLAIMS:{"unitCents":1800,"setupCents":0,"deliveryCents":1500,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800259200000,"branded":true,"currency":"SGD"}',
+      "Yep, $18 each including logo printing. Delivery is $15. We have 40 in stock and Thursday morning is fine.",
     account_info: { user_id: "provider-user-somebody" },
     sender: {
       attendee_provider_id: "supplier-provider-id",
@@ -101,6 +104,7 @@ test("WhatsApp correlation maps account/chat to configured vendor", () => {
       message_id: "wa-msg-1",
     }),
     bindings,
+    extractionContext: { deadlineAt: m.requirements.deadlineAt },
     resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
   });
   assert.equal(decision.action, "ingest");
@@ -111,6 +115,7 @@ test("WhatsApp correlation maps account/chat to configured vendor", () => {
   assert.equal(decision.observationId, "wa-msg-1");
   assert.equal(decision.chatId, "chat-wa");
   assert.equal(decision.claims.unitCents, 1800);
+  assert.equal(decision.extractionPath, "natural_language");
 });
 
 test("Instagram correlation maps account/chat to configured vendor", () => {
@@ -123,9 +128,10 @@ test("Instagram correlation maps account/chat to configured vendor", () => {
       message_id: "ig-msg-1",
       account_info: { user_id: "provider-user-somebody-ig" },
       message:
-        'Desk kits ready.\nSOMEBODY_CLAIMS:{"unitCents":2900,"setupCents":0,"deliveryCents":3000,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800259200000,"branded":true,"currency":"SGD"}',
+        "Our desk kits are $29 each, branded sleeves included. $30 delivery. Ready Thursday.",
     }),
     bindings,
+    extractionContext: { deadlineAt: m.requirements.deadlineAt },
     resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
   });
   assert.equal(decision.action, "ingest");
@@ -133,6 +139,7 @@ test("Instagram correlation maps account/chat to configured vendor", () => {
   assert.equal(decision.provider, "instagram");
   assert.equal(decision.channel, "Instagram");
   assert.equal(decision.vendorId, "social");
+  assert.equal(decision.claims.unitCents, 2900);
 });
 
 test("own-message filtering distinguishes Somebody outbound from supplier replies", () => {
@@ -198,6 +205,7 @@ test("duplicate webhook delivery is detected before ingest", () => {
 test("stable message identity and source chronology survive out-of-order webhooks", () => {
   const m = sourcingMission();
   applyCommand(m, { type: "request_quote", vendorId: "express" }, now);
+  const deadlineAt = m.requirements.deadlineAt;
 
   const thursdayAt = now + 10_000;
   const fridayAt = now + 86_400_000;
@@ -209,9 +217,10 @@ test("stable message identity and source chronology survive out-of-order webhook
       message_id: "msg-thursday",
       timestamp: new Date(thursdayAt).toISOString(),
       message:
-        'Thursday delivery is okay.\nSOMEBODY_CLAIMS:{"unitCents":1800,"setupCents":0,"deliveryCents":1500,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800172800000,"branded":true,"currency":"SGD"}',
+        "Yep, $18 each including logo printing. Delivery is $15. We have 40 in stock and Thursday morning is fine.",
     }),
     bindings,
+    extractionContext: { deadlineAt },
     resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
   });
   const friday = decideInbound({
@@ -222,9 +231,10 @@ test("stable message identity and source chronology survive out-of-order webhook
       message_id: "msg-friday",
       timestamp: new Date(fridayAt).toISOString(),
       message:
-        'Correction: Friday delivery.\nSOMEBODY_CLAIMS:{"deliveryAt":1800259200000}',
+        "Sorry, production just corrected me — branded units can only arrive Friday.",
     }),
     bindings,
+    extractionContext: { deadlineAt },
     resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
   });
   assert.equal(thursday.action, "ingest");
@@ -232,6 +242,9 @@ test("stable message identity and source chronology survive out-of-order webhook
   if (thursday.action !== "ingest" || friday.action !== "ingest") return;
 
   assert.ok(friday.revision > thursday.revision);
+  assert.ok(thursday.claims.deliveryAt);
+  assert.ok(friday.claims.deliveryAt);
+  assert.notEqual(friday.claims.deliveryAt, thursday.claims.deliveryAt);
   assert.ok(
     compareSourceOrder(
       { observedAt: thursday.observedAt, observationId: thursday.observationId },
@@ -243,7 +256,8 @@ test("stable message identity and source chronology survive out-of-order webhook
   ingestEvidence(m, evidenceFromInbound(friday, now + 200_000));
   ingestEvidence(m, evidenceFromInbound(thursday, now + 300_000));
   assert.equal(m.evidence.length, 2);
-  assert.equal(evaluate(m, "express").quote.deliveryAt, 1800259200000);
+  assert.equal(evaluate(m, "express").quote.deliveryAt, friday.claims.deliveryAt);
+  assert.equal(evaluate(m, "express").quote.unitCents, 1800);
 
   // Webhook-layer dedupe blocks replay before ingest; identical retry is a no-op.
   const replay = decideInbound({
@@ -254,16 +268,17 @@ test("stable message identity and source chronology survive out-of-order webhook
       message_id: "msg-thursday",
       timestamp: new Date(thursdayAt).toISOString(),
       message:
-        'Thursday delivery is okay.\nSOMEBODY_CLAIMS:{"unitCents":1800,"setupCents":0,"deliveryCents":1500,"taxCents":0,"quantity":25,"moq":10,"stock":100,"deliveryAt":1800172800000,"branded":true,"currency":"SGD"}',
+        "Yep, $18 each including logo printing. Delivery is $15. We have 40 in stock and Thursday morning is fine.",
     }),
     bindings,
     alreadySeenMessageId: (id) => id === "msg-thursday" || id === "msg-friday",
+    extractionContext: { deadlineAt },
     resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
   });
   assert.equal(replay.action, "duplicate");
   ingestEvidence(m, evidenceFromInbound(thursday, now + 300_000));
   assert.equal(m.evidence.length, 2);
-  assert.equal(evaluate(m, "express").quote.deliveryAt, 1800259200000);
+  assert.equal(evaluate(m, "express").quote.deliveryAt, friday.claims.deliveryAt);
   assert.equal(
     evidenceId(evidenceFromInbound(thursday, now + 300_000)),
     "whatsapp:msg-thursday",
@@ -440,7 +455,8 @@ test("outbound retries reuse receipts and provider success stays unverified unti
   const effect = m.effects.find((e) => e.kind === "rfq")!;
   const text = formatOutboundText(effect, m);
   assert.match(text, /Somebody RFQ/);
-  assert.match(text, /SOMEBODY_CLAIMS/);
+  assert.match(text, /plain text/);
+  assert.doesNotMatch(text, /SOMEBODY_CLAIMS/);
 
   const first = planOutbound({
     mission: m,
@@ -492,4 +508,129 @@ test("controlled claims trailer extracts partial quote updates", () => {
   );
   assert.deepEqual(claims, { deliveryAt: 1800259200000 });
   assert.equal(extractControlledClaims("plain supplier chat"), null);
+});
+
+test("natural language extracts price + delivery + stock + branding", () => {
+  const m = sourcingMission();
+  const text =
+    "Yep, $18 each including logo printing. Delivery is $15. We have 40 in stock and Thursday morning is fine.";
+  const claims = extractNaturalLanguageClaims(text, {
+    referenceAt: now,
+    deadlineAt: m.requirements.deadlineAt,
+  });
+  assert.equal(claims.unitCents, 1800);
+  assert.equal(claims.deliveryCents, 1500);
+  assert.equal(claims.stock, 40);
+  assert.equal(claims.branded, true);
+  assert.equal(
+    claims.deliveryAt,
+    resolveWeekdayDeliveryAt("thursday", {
+      referenceAt: now,
+      deadlineAt: m.requirements.deadlineAt,
+    }, "morning"),
+  );
+  assert.equal(claims.setupCents, undefined);
+  assert.equal(claims.taxCents, undefined);
+  assert.equal(claims.currency, undefined);
+  assert.equal(claims.moq, undefined);
+});
+
+test("natural language incomplete quote omits unstated fields", () => {
+  const claims = extractNaturalLanguageClaims("Can do $22 each for now.", {
+    referenceAt: now,
+    deadlineAt: now + 3 * 86400000,
+  });
+  assert.deepEqual(claims, { unitCents: 2200 });
+});
+
+test("natural language delivery correction supersedes earlier day", () => {
+  const m = sourcingMission();
+  applyCommand(m, { type: "request_quote", vendorId: "express" }, now);
+  const deadlineAt = m.requirements.deadlineAt;
+  const first = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "nl-1",
+      timestamp: new Date(now + 1_000).toISOString(),
+      message:
+        "Yep, $18 each including logo printing. Delivery is $15. We have 40 in stock and Thursday morning is fine.",
+    }),
+    bindings,
+    extractionContext: { deadlineAt },
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  const correction = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "nl-2",
+      timestamp: new Date(now + 90_000).toISOString(),
+      message:
+        "Sorry, production just corrected me — branded units can only arrive Friday.",
+    }),
+    bindings,
+    extractionContext: { deadlineAt },
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(first.action, "ingest");
+  assert.equal(correction.action, "ingest");
+  if (first.action !== "ingest" || correction.action !== "ingest") return;
+  ingestEvidence(m, evidenceFromInbound(first, now + 2_000));
+  ingestEvidence(m, evidenceFromInbound(correction, now + 100_000));
+  assert.equal(evaluate(m, "express").quote.deliveryAt, correction.claims.deliveryAt);
+  assert.equal(evaluate(m, "express").quote.unitCents, 1800);
+  assert.equal(evaluate(m, "express").quote.branded, true);
+  assert.ok(correction.revision > first.revision);
+});
+
+test("messy WhatsApp-style shorthand still extracts supported claims", () => {
+  const m = sourcingMission();
+  const claims = extractNaturalLanguageClaims(
+    "18ea logo ok deliv $15 stk 40 thu am",
+    {
+      referenceAt: now,
+      deadlineAt: m.requirements.deadlineAt,
+    },
+  );
+  assert.equal(claims.unitCents, 1800);
+  assert.equal(claims.deliveryCents, 1500);
+  assert.equal(claims.stock, 40);
+  assert.equal(claims.branded, true);
+  assert.ok(claims.deliveryAt);
+});
+
+test("messages with no supported quote claims ingest empty claims without fabrication", () => {
+  const m = sourcingMission();
+  const normalized = normalizeSupplierClaims(
+    "Can you confirm the receiving address again?",
+    { referenceAt: now, deadlineAt: m.requirements.deadlineAt },
+  );
+  assert.equal(normalized.path, "none");
+  assert.deepEqual(normalized.claims, {});
+
+  const decision = decideInbound({
+    event: webhook({
+      account_type: "WHATSAPP",
+      account_id: "acct-wa",
+      chat_id: "chat-wa",
+      message_id: "nl-question",
+      message: "Can you confirm the receiving address again?",
+    }),
+    bindings,
+    extractionContext: { deadlineAt: m.requirements.deadlineAt },
+    resolveVendorId: (endpointRef) => vendorIdFor(endpointRef, m),
+  });
+  assert.equal(decision.action, "ingest");
+  if (decision.action !== "ingest") return;
+  assert.deepEqual(decision.claims, {});
+  assert.equal(decision.extractionPath, "none");
+  assert.match(decision.text, /receiving address/);
+  applyCommand(m, { type: "request_quote", vendorId: "express" }, now);
+  ingestEvidence(m, evidenceFromInbound(decision, now + 50));
+  assert.equal(m.evidence.length, 1);
+  assert.deepEqual(m.evidence[0]?.claims, {});
+  assert.equal(evaluate(m, "express").status, "needs_clarification");
 });

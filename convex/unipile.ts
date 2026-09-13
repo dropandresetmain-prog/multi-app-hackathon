@@ -4,9 +4,11 @@ import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import {
-  decideInbound,
+  correlateInbound,
   evidenceFromInbound,
   loadBindings,
+  normalizeSupplierClaimsLive,
+  withExtractedClaims,
 } from "../lib/unipile";
 import type { UnipileWebhookEvent } from "../lib/unipile";
 
@@ -45,6 +47,7 @@ export const handleWebhook = internalAction({
 
     let missionKey: string | undefined;
     let vendorId: string | null = null;
+    let deadlineAt: number | null = null;
     if (binding) {
       const match: { key: string; vendorId: string } | null =
         await ctx.runQuery(internal.unipileStore.findVendorMission, {
@@ -53,10 +56,14 @@ export const handleWebhook = internalAction({
       if (match) {
         missionKey = match.key;
         vendorId = match.vendorId;
+        const mission = await ctx.runQuery(internal.missions.read, {
+          key: match.key,
+        });
+        deadlineAt = mission.requirements.deadlineAt;
       }
     }
 
-    const decision = decideInbound({
+    const correlated = correlateInbound({
       event,
       bindings,
       alreadySeenMessageId: () => seen,
@@ -64,10 +71,10 @@ export const handleWebhook = internalAction({
         binding && binding.endpointRef === endpointRef ? vendorId : null,
     });
 
-    if (decision.action === "duplicate")
+    if (correlated.action === "duplicate")
       return "Duplicate Unipile webhook ignored";
 
-    if (decision.action === "ignore_own") {
+    if (correlated.action === "ignore_own") {
       await ctx.runMutation(internal.unipileStore.recordInbound, {
         providerMessageId: event.message_id,
         provider: binding!.provider,
@@ -75,13 +82,13 @@ export const handleWebhook = internalAction({
         chatId: event.chat_id,
         observedAt: Date.parse(event.timestamp) || args.retrievedAt,
         status: "ignored_own",
-        reason: decision.reason,
+        reason: correlated.reason,
         missionKey,
       });
-      return decision.reason;
+      return correlated.reason;
     }
 
-    if (decision.action === "reject") {
+    if (correlated.action === "reject") {
       if (event.message_id && provider) {
         await ctx.runMutation(internal.unipileStore.recordInbound, {
           providerMessageId: event.message_id,
@@ -90,15 +97,25 @@ export const handleWebhook = internalAction({
           chatId: event.chat_id || "unknown",
           observedAt: Date.parse(event.timestamp) || args.retrievedAt,
           status: "rejected",
-          reason: decision.reason,
+          reason: correlated.reason,
           missionKey,
         });
       }
-      throw new Error(decision.reason);
+      throw new Error(correlated.reason);
     }
 
     if (!missionKey)
       throw new Error("No active mission for Unipile vendor binding");
+
+    const extracted = await normalizeSupplierClaimsLive(event.message ?? "", {
+      referenceAt: correlated.observedAt,
+      deadlineAt,
+    });
+    const decision = withExtractedClaims(
+      { ...correlated, text: extracted.text },
+      extracted.claims,
+      extracted.path,
+    );
 
     const evidence = evidenceFromInbound(decision, args.retrievedAt);
     const message: string = await ctx.runMutation(internal.missions.apply, {
@@ -109,6 +126,7 @@ export const handleWebhook = internalAction({
       }),
     });
 
+    const claimCount = Object.keys(decision.claims).length;
     await ctx.runMutation(internal.unipileStore.recordInbound, {
       providerMessageId: decision.observationId,
       provider: decision.provider,
@@ -116,7 +134,9 @@ export const handleWebhook = internalAction({
       chatId: decision.chatId,
       observedAt: decision.observedAt,
       status: "ingested",
-      reason: "Normalized supplier claims ingested",
+      reason: claimCount
+        ? `Normalized supplier claims via ${decision.extractionPath ?? "unknown"}`
+        : "Supplier message recorded with no extractable quote claims",
       missionKey,
     });
     return message;

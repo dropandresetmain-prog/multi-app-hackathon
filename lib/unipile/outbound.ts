@@ -45,8 +45,7 @@ export function formatOutboundText(effect: Effect, mission: Mission): string {
         `Budget ceiling: SGD ${((requirements.budgetCents ?? 0) / 100).toFixed(2)} total.`,
         `Hard delivery deadline: ${deadline}.`,
         `Branding required: ${requirements.branded ? "yes" : "no"}.`,
-        "Please reply with unit price, setup, delivery, tax, MOQ, stock, delivery timing, branding, and currency.",
-        'Include a machine trailer: SOMEBODY_CLAIMS:{"unitCents":...,"currency":"SGD",...}',
+        "Please reply in plain text with unit price, setup, delivery, tax, MOQ, stock, delivery timing, branding, and currency.",
       ].join("\n");
     }
     case "clarification":

@@ -15,12 +15,24 @@ const ALLOWED_KEYS = new Set([
   "currency",
 ]);
 
+export type ClaimExtractionContext = {
+  /** Provider source time for the message (ms). */
+  referenceAt: number;
+  /** Mission hard deadline when known — used only to resolve weekday delivery phrasing. */
+  deadlineAt?: number | null;
+};
+
+export type ClaimExtractionPath = "trailer" | "natural_language" | "model" | "none";
+
+export type ClaimExtractionResult = {
+  claims: Partial<Quote>;
+  path: ClaimExtractionPath;
+  /** Raw supplier text with optional trailer stripped. */
+  text: string;
+};
+
 /**
- * Controlled suppliers include a machine-readable claims trailer so the messaging
- * adapter can feed `ingest_external_evidence` without inventing quote fields.
- * Example:
- *   Yep, $18 each with printing.
- *   SOMEBODY_CLAIMS:{"unitCents":1800,"deliveryCents":1500,"currency":"SGD",...}
+ * Deterministic test/debug fast-path. Optional in live traffic — not required.
  */
 export function extractControlledClaims(text: string): Partial<Quote> | null {
   const match = text.match(CLAIMS_MARKER);
@@ -33,30 +45,263 @@ export function extractControlledClaims(text: string): Partial<Quote> | null {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     throw new Error("Controlled claims trailer must be a JSON object");
-  const claims: Partial<Quote> = {};
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!ALLOWED_KEYS.has(key))
-      throw new Error(`Unknown claim field in controlled trailer: ${key}`);
-    if (key === "branded") {
-      if (typeof value !== "boolean") throw new Error("Invalid branded claim");
-      claims.branded = value;
-      continue;
-    }
-    if (key === "currency") {
-      if (typeof value !== "string" || !/^[A-Z]{3}$/.test(value))
-        throw new Error("Invalid currency claim");
-      claims.currency = value;
-      continue;
-    }
-    if (typeof value !== "number" || !Number.isSafeInteger(value))
-      throw new Error(`Invalid numeric claim: ${key}`);
-    (claims as Record<string, number>)[key] = value;
-  }
-  if (Object.keys(claims).length === 0)
-    throw new Error("Controlled claims trailer must include at least one field");
-  return claims;
+  return sanitizePartialQuote(parsed);
 }
 
 export function stripClaimsTrailer(text: string): string {
   return text.replace(CLAIMS_MARKER, "").trim();
+}
+
+/** Drop unknown keys and invalid values. Never invents fields that were absent. */
+export function sanitizePartialQuote(input: unknown): Partial<Quote> {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new Error("Claims must be a JSON object");
+  const claims: Partial<Quote> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!ALLOWED_KEYS.has(key)) continue;
+    if (value === undefined || value === null) continue;
+    if (key === "branded") {
+      if (typeof value !== "boolean") continue;
+      claims.branded = value;
+      continue;
+    }
+    if (key === "currency") {
+      if (typeof value !== "string" || !/^[A-Z]{3}$/.test(value)) continue;
+      claims.currency = value;
+      continue;
+    }
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) continue;
+    if (key === "quantity" || key === "deliveryAt") {
+      if (value < 1) continue;
+    } else if (value < 0) continue;
+    (claims as Record<string, number>)[key] = value;
+  }
+  return claims;
+}
+
+function dollarsToCents(amount: number): number | null {
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return Math.round(amount * 100);
+}
+
+function parseMoneyToken(raw: string): number | null {
+  const cleaned = raw.replace(/,/g, "").trim();
+  const value = Number(cleaned);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return dollarsToCents(value);
+}
+
+const WEEKDAYS: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+/**
+ * Resolve a weekday phrase onto the calendar week around the mission deadline
+ * (fallback: message reference time). Morning → 09:00 UTC that day.
+ */
+export function resolveWeekdayDeliveryAt(
+  weekday: string,
+  context: ClaimExtractionContext,
+  timeOfDay: "morning" | "afternoon" | "unspecified" = "unspecified",
+): number | null {
+  const target = WEEKDAYS[weekday.toLowerCase()];
+  if (target === undefined) return null;
+  const anchor = context.deadlineAt ?? context.referenceAt;
+  const base = new Date(anchor);
+  const day = base.getUTCDay();
+  let delta = target - day;
+  // Prefer the occurrence in the same week as the deadline; if the named day
+  // is before the anchor weekday by more than 3 days, use the next week.
+  if (delta < -3) delta += 7;
+  if (delta > 3 && context.deadlineAt == null) delta -= 7;
+  const at = new Date(
+    Date.UTC(
+      base.getUTCFullYear(),
+      base.getUTCMonth(),
+      base.getUTCDate() + delta,
+      timeOfDay === "morning" ? 9 : timeOfDay === "afternoon" ? 15 : 12,
+      0,
+      0,
+      0,
+    ),
+  );
+  return at.getTime();
+}
+
+/**
+ * Bounded free-text extractor. Only emits fields explicitly supported by the
+ * supplier message. Does not invent zero fees, stock, dates, MOQ, branding, or currency.
+ */
+export function extractNaturalLanguageClaims(
+  text: string,
+  context: ClaimExtractionContext,
+): Partial<Quote> {
+  const claims: Partial<Quote> = {};
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return claims;
+  const lower = normalized.toLowerCase();
+
+  // Unit price: "$18 each", "18/ea", "SGD 18 per unit", "18 dollars each", "$18ea"
+  const unit =
+    normalized.match(
+      /(?:sgd\s*)?\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:each|ea\b|\/\s*ea\b|\/\s*unit|per\s+(?:unit|pc|piece)|dollars?\s+each)/i,
+    ) ||
+    normalized.match(
+      /(?:unit(?:\s*price)?|price)\s*(?:is|:)?\s*(?:sgd\s*)?\$?\s*(\d+(?:\.\d{1,2})?)/i,
+    );
+  if (unit?.[1]) {
+    const cents = parseMoneyToken(unit[1]);
+    if (cents !== null) claims.unitCents = cents;
+  }
+
+  // Delivery fee: "delivery is $15", "$15 delivery", "deliv $15", "del $15"
+  const deliveryFee =
+    normalized.match(
+      /(?:delivery|shipping|ship|courier|deliv|del)\s*(?:fee|cost|charge)?\s*(?:is|:)?\s*(?:sgd\s*)?\$?\s*(\d+(?:\.\d{1,2})?)/i,
+    ) ||
+    normalized.match(
+      /(?:sgd\s*)?\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:for\s+)?(?:delivery|shipping|ship|courier|deliv)\b/i,
+    );
+  if (deliveryFee?.[1]) {
+    const cents = parseMoneyToken(deliveryFee[1]);
+    if (cents !== null) claims.deliveryCents = cents;
+  }
+
+  // Setup fee only when an amount is stated (not when merely omitted).
+  const setup = normalized.match(
+    /(?:setup|set-up|set up)\s*(?:fee|cost|charge)?\s*(?:is|:)?\s*(?:sgd\s*)?\$?\s*(\d+(?:\.\d{1,2})?)/i,
+  );
+  if (setup?.[1]) {
+    const cents = parseMoneyToken(setup[1]);
+    if (cents !== null) claims.setupCents = cents;
+  }
+  if (
+    /\b(?:no|without|waived)\s+setup\b/i.test(normalized) ||
+    /\bsetup\s*(?:fee|charge)?\s*(?:is\s+)?(?:waived|none|0|zero)\b/i.test(
+      normalized,
+    )
+  )
+    claims.setupCents = 0;
+
+  // Tax only when stated.
+  const tax = normalized.match(
+    /(?:tax|gst|vat)\s*(?:is|:)?\s*(?:sgd\s*)?\$?\s*(\d+(?:\.\d{1,2})?)/i,
+  );
+  if (tax?.[1]) {
+    const cents = parseMoneyToken(tax[1]);
+    if (cents !== null) claims.taxCents = cents;
+  }
+  if (/\b(?:no|without|zero)\s+(?:tax|gst|vat)\b/i.test(normalized))
+    claims.taxCents = 0;
+
+  // Stock: "40 in stock", "stock 40", "we have 40", "stk 40"
+  const stock =
+    normalized.match(/\b(\d+)\s+in\s+stock\b/i) ||
+    normalized.match(/\b(?:stock|stk)(?:\s*(?:is|:|of))?\s*(\d+)\b/i) ||
+    normalized.match(/\b(?:we\s+have|available)\s+(\d+)\b/i);
+  if (stock?.[1]) claims.stock = Number(stock[1]);
+
+  // MOQ
+  const moq =
+    normalized.match(/\bmoq\s*(?:is|:)?\s*(\d+)\b/i) ||
+    normalized.match(/\bmin(?:imum)?(?:\s+order)?(?:\s+qty|\s+quantity)?\s*(?:is|:)?\s*(\d+)\b/i);
+  if (moq?.[1]) claims.moq = Number(moq[1]);
+
+  // Quantity offered
+  const quantity = normalized.match(
+    /\b(?:qty|quantity|can\s+do|for)\s+(\d+)\s*(?:units?|pcs?|pieces?)?\b/i,
+  );
+  if (quantity?.[1] && !/moq|stock|minimum/i.test(quantity[0]))
+    claims.quantity = Number(quantity[1]);
+
+  // Branding
+  if (
+    /\b(?:unbranded|no\s+branding|without\s+(?:logo|branding|printing)|plain\s+only)\b/i.test(
+      lower,
+    )
+  )
+    claims.branded = false;
+  else if (
+    /\b(?:branded|branding|logo|printing|print(?:ed)?|with\s+(?:your\s+)?logo|including\s+logo)\b/i.test(
+      lower,
+    )
+  )
+    claims.branded = true;
+
+  // Currency only when explicitly named (never infer SGD from "$" alone).
+  if (/\bsgd\b/i.test(normalized) || /\bs\$/.test(normalized))
+    claims.currency = "SGD";
+  else if (/\busd\b/i.test(normalized)) claims.currency = "USD";
+
+  // Delivery timing via weekday phrases (thu / thurs / thursday, am → morning).
+  const weekday = lower.match(
+    /\b(mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/,
+  );
+  if (weekday?.[1]) {
+    const token = weekday[1];
+    const full =
+      token.startsWith("mon")
+        ? "monday"
+        : token.startsWith("tue")
+          ? "tuesday"
+          : token.startsWith("wed")
+            ? "wednesday"
+            : token.startsWith("thu")
+              ? "thursday"
+              : token.startsWith("fri")
+                ? "friday"
+                : token.startsWith("sat")
+                  ? "saturday"
+                  : "sunday";
+    const tod =
+      /\b(?:morning|am)\b/i.test(lower)
+        ? "morning"
+        : /\b(?:afternoon|evening|pm)\b/i.test(lower)
+          ? "afternoon"
+          : "unspecified";
+    const at = resolveWeekdayDeliveryAt(full, context, tod);
+    if (at !== null) claims.deliveryAt = at;
+  }
+
+  // Absolute ISO / numeric epoch only when explicitly present.
+  const iso = normalized.match(
+    /\b(20\d{2}-\d{2}-\d{2}(?:[t\s]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?z?)?)\b/i,
+  );
+  if (iso?.[1] && claims.deliveryAt === undefined) {
+    const ms = Date.parse(iso[1]);
+    if (Number.isFinite(ms)) claims.deliveryAt = ms;
+  }
+
+  return claims;
+}
+
+/**
+ * Sync normalize: trailer fast-path, else natural-language. Empty claims are allowed.
+ */
+export function normalizeSupplierClaims(
+  text: string,
+  context: ClaimExtractionContext,
+): ClaimExtractionResult {
+  const raw = text.trim();
+  const stripped = stripClaimsTrailer(raw);
+  const display = (stripped || raw).slice(0, 1500);
+  try {
+    const trailer = extractControlledClaims(raw);
+    if (trailer && Object.keys(trailer).length > 0)
+      return { claims: trailer, path: "trailer", text: display };
+  } catch {
+    // Invalid trailer falls through to natural language rather than rejecting the message.
+  }
+  const claims = extractNaturalLanguageClaims(display, context);
+  return {
+    claims,
+    path: Object.keys(claims).length ? "natural_language" : "none",
+    text: display,
+  };
 }
