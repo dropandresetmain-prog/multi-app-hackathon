@@ -2,207 +2,256 @@
 
 ## Goal
 
-Build the smallest role-agnostic reliability layer needed to make one procurement worker trustworthy across real external systems.
+Somebody is built to own one bounded operational job across real external systems without giving the model unchecked authority over business actions.
 
-The implementation should prove the architecture through the procurement demo without building a generic enterprise workflow engine.
-
-## Dependency direction
-
-```text
-User request
-    ↓
-Procurement Role Adapter
-    ↓
-Core Worker Contract
-    ↓
-Reliability Core
-    ↓
-Tool / integration adapters
-    ↓
-External systems
-```
-
-The Reliability Core must not contain procurement-specific concepts such as MOQ, delivery deadline semantics, gift packaging, or vendor ranking rules. Those belong in the Procurement Role Adapter or its evaluation helpers.
+The hackathon implementation demonstrates that architecture through procurement.
 
 ## Runtime shape
 
 ```text
-                         ┌────────────────────┐
-                         │   Mission Control   │
-                         │   live Convex UI   │
-                         └─────────┬──────────┘
-                                   │
-                                   ▼
-User / voice input → Procurement Adapter → Core Worker Contract
-                                   │
-                                   ▼
-                         Reliability Core
-                  ┌────────┼─────────┬──────────┐
-                  │        │         │          │
-             workflow   effects   evidence   approvals
-                state    ledger      /        / gates
-                  │        │        /          │
-                  └────────┴───────┴───────────┘
-                                   │
-                      deterministic tool adapters
-             ┌─────────────┬────────────┬──────────────┐
-             ▼             ▼            ▼              ▼
-          Google        Unipile       Web/Exa      QuickBooks
-      Workspace APIs  WA + Instagram  / native     Sandbox
-                                   │
-                                   ▼
-                             external state
+Local Somebody UI
+    ↓
+/api/mission (localhost-only write boundary)
+    ↓
+Convex Development
+    ↓
+Procurement Agent (OpenAI Agents SDK)
+    ↓
+Procurement policy + Reliability Core
+    ↓
+Effect / provider adapters
+    ├─ Google Workspace
+    ├─ Unipile → WhatsApp / Instagram
+    ├─ Public Web
+    └─ QuickBooks Online Sandbox
+    ↓
+External systems
+    ↓
+Read-back / verification
 ```
 
-## Source of truth
+Convex is the operational source of truth for mission state, evidence, approvals, effects, and verification state.
 
-**Convex is the operational SSOT.**
+Google Sheets is a human-readable projection, not the workflow database.
 
-External systems provide observations, evidence, side effects, and user-facing projections. They do not own the workflow state machine.
+## Agent vs application policy
 
-Examples:
+The model is allowed to decide how to progress the job within a bounded tool surface.
 
-- Google Sheets = human-readable comparison projection;
-- Calendar = event/delivery context and optional resulting delivery appointment;
-- Drive = source/evidence files;
-- Gmail / WhatsApp / Instagram = communication surfaces;
-- QuickBooks = financial system of record after approved PO creation.
+Application code owns the rules that must not depend on free-form model judgment.
 
-## Core Worker Contract
+### The agent owns
 
-Implement the minimum useful contract for this demo. Initial shape may include:
+- deciding what information is still needed;
+- choosing which bounded tool to use next;
+- deciding which supplier needs clarification;
+- deciding when enough evidence exists to propose a recommendation;
+- explaining the current recommendation in concise language.
+
+### Application policy owns
+
+- valid workflow transitions;
+- quote completeness;
+- quantity / MOQ semantics;
+- landed-cost calculation;
+- hard budget, deadline, branding, stock, and currency constraints;
+- deterministic ranking among eligible suppliers;
+- approval requirements;
+- recipient identity;
+- effect idempotency;
+- completion gates.
+
+The model proposes actions. The application decides whether they are legal.
+
+## Workflow state
+
+The implemented mission states are:
 
 ```text
-objective
-knownFacts
-requiredFacts
-constraints
-authority
-authorizedSideEffects
-successConditions
-verificationRules
-escalationRules
-idempotencyScope
+clarifying
+→ sourcing
+→ awaiting_approval
+→ approved
+→ verifying
+→ complete
 ```
 
-Do not add fields without a concrete use in the demo or a reliability test.
+A mission can enter `blocked` when new evidence invalidates the authority under which follow-through was proceeding.
 
-## Procurement Role Adapter
+Important behavior:
 
-The adapter owns domain semantics such as:
+- new evidence while awaiting approval invalidates the stale recommendation and returns the job to sourcing;
+- new evidence after approval fails closed into `blocked` rather than allowing remaining commitments to continue on stale approval;
+- `complete` is only reachable after required effects are verified.
 
-- what facts must be known before sourcing;
-- what quote fields make vendors comparable;
-- which fields are hard constraints versus preferences;
-- how deadline / MOQ / quantity / landed price / customization are evaluated;
-- when a reply needs clarification;
-- how stale or conflicting vendor statements are resolved;
-- how to construct a recommendation;
-- which actions need approval.
+## Evidence model
 
-## Reliability Core responsibilities
+Supplier information is stored as evidence rather than being collapsed into one mutable quote object.
 
-Keep these explicit and small:
+Each evidence item includes:
 
-1. **Workflow state enforcement** — invalid transitions are rejected.
-2. **Evidence ledger** — record what was observed, from which source, and when.
-3. **Effect ledger / idempotency** — outbound side effects have stable identities and cannot be duplicated accidentally.
-4. **Approval enforcement** — gated effects cannot execute before persisted approval.
-5. **Verification** — important side effects require observable read-back or equivalent evidence before completion.
-6. **Partial state** — failed/unverified work remains visible and cannot silently become `COMPLETE`.
-7. **Reconciliation** — later authoritative evidence may supersede older evidence without erasing history.
+- vendor identity;
+- authority (`catalogue` or `vendor`);
+- source revision;
+- observed time;
+- raw text;
+- normalized claims;
+- provider/channel provenance;
+- stable observation identity;
+- optional source URL / message-parent identity.
 
-## Workflow state machine
+The system derives the current quote from that evidence history.
 
-Keep one application-owned state machine. Initial candidate:
+### Supersession
+
+For each quote field, newer authoritative evidence can supersede older evidence while the old observation remains stored.
+
+This lets the UI show both:
+
+- what the supplier said earlier;
+- what is currently authoritative.
+
+Equal-authority/equal-revision conflicts remain unresolved rather than being silently guessed through.
+
+## Procurement evaluation
+
+The demonstrated quote model includes:
+
+- unit price;
+- setup cost;
+- delivery cost;
+- tax;
+- quoted quantity;
+- MOQ;
+- stock;
+- delivery time;
+- branding availability;
+- currency.
+
+The required quantity remains the user requirement. MOQ does not mutate it.
+
+The effective order quantity is:
 
 ```text
-CLARIFYING_REQUEST
-→ SOURCING
-→ COLLECTING_QUOTES
-→ CLARIFYING_QUOTES
-→ READY_TO_COMPARE
-→ RECOMMENDED
-→ AWAITING_APPROVAL
-→ AWARDED
-→ PO_RECORDED
-→ VERIFIED
-→ COMPLETE
+max(required quantity, MOQ)
 ```
 
-Failure / unresolved states should be explicit where needed rather than encoded in model prose.
+Landed cost is calculated from the effective order quantity plus setup, delivery, and tax.
 
-The model may propose actions. Application code owns valid state transitions.
+A supplier is only eligible when the required evidence is complete and every hard constraint passes.
 
-## Vendor state model
+Eligible suppliers are ranked by total landed cost with a stable deterministic tie-breaker. The model may explain the result but cannot override a worse-ranked supplier into the winning position.
 
-Candidate vendor states:
+## Recipient identity
 
-```text
-DISCOVERED
-→ CONTACTED
-→ WAITING
-→ NEEDS_CLARIFICATION
-→ QUOTE_COMPLETE
-→ ELIGIBLE / INELIGIBLE
-→ SELECTED / NOT_SELECTED
-```
+The model never invents an email address, WhatsApp target, Instagram target, or accounting entity.
 
-A vendor may move back to `NEEDS_CLARIFICATION` or become `INELIGIBLE` when new authoritative evidence changes its viability.
+It operates on stable vendor IDs. Application configuration resolves those IDs to bounded provider endpoints such as:
 
-## Messaging identity invariant
+- Gmail recipient;
+- Unipile account ID;
+- Unipile chat ID;
+- configured QuickBooks vendor/entity mapping.
 
-Models never resolve raw communication endpoints.
+This keeps external identity out of free-form model output.
 
-The model works with stable `vendorId` values. Application state maps each vendor to its configured channel and stable provider identifiers such as email address, Unipile account ID, and chat ID.
+## Effects and idempotency
 
-## Idempotency
+External writes are represented as effects with stable logical identities.
 
-Stable effect keys should exist for at least:
+Examples include:
 
 ```text
 rfq:{requestId}:{vendorId}
-clarification:{requestId}:{vendorId}:{questionSetVersion}
+clarification:{requestId}:{vendorId}:{version}
 approval:{requestId}:{recommendationVersion}
 award:{requestId}:{vendorId}
 rejection:{requestId}:{vendorId}:{awardVersion}
 quickbooks-po:{requestId}:{vendorId}
 ```
 
-The exact key format may change, but retry behavior must be tested.
+Retries reuse the same logical effect identity instead of intentionally creating a second business action.
 
-## Convex environment safety
+Provider receipts are persisted so a retry can reconcile existing external state before deciding whether another provider call is necessary.
 
-Development, Preview, and Production are separate databases/state environments.
+## Approval gate
 
-Before any write-capable work, the active deployment must be explicitly named and verified. Never rely on implicit CLI state. See `AGENTS.md`.
+Research, supplier outreach, and clarification are autonomous.
 
-## UI architecture
+Winner confirmation, loser close-out, and Purchase Order creation are gated effects.
 
-Mission Control reads persisted Convex state. It does not independently calculate quote eligibility, recommendation, approval, or workflow transitions.
+They are unauthorized until the user approves the current recommendation version against the current evidence version.
 
-Required surfaces:
+The agent cannot create its own approval.
 
-- brief / constraints;
-- workflow progress;
-- vendor channel + current state;
-- evidence / missing fields / contradictions;
+## Verification
+
+Execution and verification are separate steps.
+
+A provider returning success moves an effect forward, but does not by itself prove that the desired external state exists.
+
+Examples:
+
+- Gmail / Unipile sends retain provider message IDs and can be read back;
+- Google Sheets writes are followed by read-back of the projected state;
+- QuickBooks Purchase Orders persist the provider entity ID and are independently fetched and checked.
+
+The Reliability Core prevents mission completion while required effects remain pending, attempted, or unverified.
+
+## Provider boundaries
+
+### Google Workspace
+
+- Calendar: bounded event read;
+- Drive: bounded folder/file context read;
+- Gmail: configured supplier messaging plus reply ingestion;
+- Sheets: human-readable comparison projection plus read-back.
+
+### Public Web
+
+The web adapter retrieves a configured real catalogue source and preserves source provenance.
+
+Public catalogue data is treated conservatively: fields absent from the source remain unknown. A web option with useful but incomplete evidence can remain visible without blocking fully evaluated contactable suppliers from being ranked.
+
+### Unipile
+
+WhatsApp and Instagram use app-owned account/chat bindings.
+
+Outbound effects persist provider message identity. Inbound webhook events are correlated against configured bindings, deduplicated by provider message ID, normalized into evidence, and retain source chronology.
+
+### QuickBooks Online Sandbox
+
+Purchase Order creation happens only after approval.
+
+The adapter uses stable logical identity to reconcile retries, persists the QuickBooks entity ID, and independently reads the PO back before verification.
+
+## UI boundary
+
+Mission Control reads persisted Convex state. It does not independently calculate eligibility, ranking, approvals, or workflow transitions.
+
+The primary UI surfaces are:
+
+- delegated request and confirmed constraints;
+- current job state;
+- supplier/channel cards;
+- missing and changed evidence;
 - normalized comparison;
-- recommendation;
-- human approval controls;
-- final side-effect verification.
+- recommendation and approval controls;
+- post-approval effect status;
+- final verified completion state.
 
-Prefer a polished single-screen execution view over multiple pages.
+The frontend write route is intentionally localhost-only for this Development demo. Provider credentials remain server-side / Convex-side.
 
-## Explicit exclusions
+## Scope boundary
 
-Do not build:
+The architecture deliberately does not include:
 
-- general workflow DSL;
+- a general workflow DSL;
 - dynamic multi-agent staffing;
-- role marketplace;
-- payment engine;
-- general procurement catalogue;
-- generic CRM;
-- browser automation platform;
-- parallel messaging-provider abstractions beyond the selected integrations.
+- a role marketplace;
+- a payment engine;
+- a generic procurement marketplace;
+- a CRM;
+- unrestricted browser automation.
+
+The goal is the smallest credible architecture that proves one autonomous worker can own a messy cross-app business job with durable evidence, bounded authority, retry safety, and verification.
