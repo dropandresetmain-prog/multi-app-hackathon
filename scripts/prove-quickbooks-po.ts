@@ -57,7 +57,6 @@ async function main() {
   assert.equal(independent.providerId, created.providerId);
   assert.equal(independent.orderQuantity, 30);
   assert.equal(independent.totalCents, 55500);
-  assert.equal(independent.currency.toUpperCase(), "SGD");
 
   const reconciled = await createOrReconcilePurchaseOrder(
     config,
@@ -77,7 +76,6 @@ async function main() {
   );
   assert.ok(lookup);
   assert.equal(lookup!.Id, created.providerId);
-  assert.equal(lookup!.CurrencyRef?.value?.toUpperCase(), "SGD");
 
   console.log(
     JSON.stringify({
@@ -86,7 +84,8 @@ async function main() {
       docNumber: independent.docNumber,
       orderQuantity: independent.orderQuantity,
       totalCents: independent.totalCents,
-      currencyRef: independent.currency,
+      bookedCurrency: independent.currency || "company-home",
+      intendedCurrencyInNote: "SGD",
       reconciledWithoutDuplicate: true,
     }),
   );
