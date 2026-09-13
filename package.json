@@ -8,6 +8,7 @@
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "prove:web-sourcing": "tsx scripts/prove-web-sourcing.ts",
     "typecheck:convex": "tsc -p convex/tsconfig.json --noEmit",
     "dev:configure": "tsx scripts/configure-development.ts",
     "dev:smoke": "tsx scripts/smoke-development.ts",

@@ -22,6 +22,8 @@ import {
   runProcurementAgent,
 } from "../lib/agent/procurement";
 import { Usage, type Model } from "@openai/agents";
+import type { EvidenceInput, Mission } from "../lib/procurement/types";
+import { defaultCatalogueSource } from "../lib/web/catalogueSource";
 const now = 1800000000000;
 function sourcing() {
   const m = createMission(
@@ -42,13 +44,52 @@ function sourcing() {
   );
   return m;
 }
+/** Domain-test stand-in: complete web-shaped catalogue evidence (not live fetch). */
+function catalogueDomainEvidence(m: Mission, stage: "initial"): EvidenceInput {
+  const source = defaultCatalogueSource();
+  const deadline = m.requirements.deadlineAt!;
+  const quantity = m.requirements.quantity!;
+  return {
+    vendorId: "catalogue",
+    source: `${source.supplierName} public catalogue`,
+    authority: "catalogue",
+    revision: 1,
+    observedAt: now,
+    text: `${source.productName}: domain-test complete quote stand-in for ranking invariants.`,
+    claims: {
+      unitCents: 1400,
+      setupCents: 0,
+      deliveryCents: 2500,
+      taxCents: 0,
+      quantity,
+      moq: 50,
+      stock: 100,
+      deliveryAt: deadline + 86400000,
+      branded: true,
+      currency: "SGD",
+    },
+    provenance: {
+      provider: "web",
+      channel: "Web",
+      observationId: `catalogue:${stage}`,
+      parentId: `web:source:${source.productUrl}`,
+      url: source.productUrl,
+      observedAt: now,
+      retrievedAt: now,
+      sourceLabel: `${source.supplierName} / ${source.productName}`,
+    },
+  };
+}
 function collect(m: ReturnType<typeof sourcing>, vendorId: string) {
   applyCommand(m, { type: "request_quote", vendorId }, now);
   applyCommand(
     m,
     {
       type: "ingest_external_evidence",
-      evidence: fixtureEvidence(m, vendorId, "initial", now),
+      evidence:
+        vendorId === "catalogue"
+          ? catalogueDomainEvidence(m, "initial")
+          : fixtureEvidence(m, vendorId, "initial", now),
     },
     now,
   );

@@ -1,3 +1,4 @@
+import { defaultCatalogueSource } from "../web/catalogueSource";
 import type {
   EvidenceInput,
   Evaluation,
@@ -8,8 +9,9 @@ import type {
 } from "./types";
 
 export const DEVELOPMENT_ACCOUNTING_ENDPOINT = "dev.accounting.ledger";
+const catalogueSource = defaultCatalogueSource();
 const DEVELOPMENT_ENDPOINTS: Record<string, string> = {
-  catalogue: "dev.web.everyday-co",
+  catalogue: catalogueSource.endpointRef,
   studio: "dev.gmail.paper-pine",
   express: "dev.whatsapp.good-things",
   social: "dev.instagram.little-objects",
@@ -42,9 +44,9 @@ export function createMission(
   const configured = [
     {
       id: "catalogue",
-      name: "The Everyday Co.",
+      name: catalogueSource.supplierName,
       channel: "Web" as const,
-      product: "Canvas everyday tote",
+      product: catalogueSource.productName,
     },
     {
       id: "studio",
@@ -167,15 +169,10 @@ export function fixtureEvidence(
   let claims: Partial<Quote> = base;
   let text =
     "Confirmed: all-in quote includes branding and tax, with delivery before your receiving deadline.";
-  if (vendorId === "catalogue") {
-    claims = {
-      ...base,
-      unitCents: 1400,
-      moq: 50,
-      deliveryAt: deadline + 86400000,
-    };
-    text =
-      "Catalogue sample: $14 each. Minimum 50; custom orders need another day. Not a live web lookup.";
+  if (configured.channel === "Web") {
+    throw new Error(
+      "Web catalogue evidence must come from public web retrieval (provider web), not Development fixtures",
+    );
   }
   if (vendorId === "studio" && stage === "initial") {
     claims = {
@@ -212,7 +209,7 @@ export function fixtureEvidence(
   return {
     vendorId,
     source: `Development fixture / ${configured.channel}`,
-    authority: configured.channel === "Web" ? "catalogue" : "vendor",
+    authority: "vendor",
     revision: stage === "initial" ? 1 : stage === "clarification" ? 2 : 3,
     observedAt: now,
     text,

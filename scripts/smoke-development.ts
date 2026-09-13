@@ -75,7 +75,20 @@ async function main() {
     for (const vendorId of ["studio", "social", "express", "catalogue"])
       await send({ type: "request_quote", vendorId });
     let pending = await read();
-    assert.equal(pending.evidence.length, 0);
+    const catalogue = pending.vendors.find((v) => v.id === "catalogue")!;
+    const webEvidence = pending.evidence.filter(
+      (item) => item.vendorId === "catalogue" && item.provenance.provider === "web",
+    );
+    assert.equal(webEvidence.length, 1);
+    assert.equal(webEvidence[0]?.provenance.channel, "Web");
+    assert.ok(webEvidence[0]?.provenance.url?.startsWith("https://"));
+    assert.ok(webEvidence[0]?.provenance.retrievedAt);
+    assert.equal(catalogue.evaluation.status, "needs_clarification");
+    assert.equal(
+      pending.evidence.filter((item) => item.provenance.provider === "fixture")
+        .length,
+      0,
+    );
     assert.equal(
       pending.vendors.find((v) => v.id === "studio")!.communication,
       "pending",
@@ -84,12 +97,22 @@ async function main() {
       pending.vendors.find((v) => v.id === "studio")!.communication,
       "verified",
     );
-    for (const vendorId of ["studio", "social", "express", "catalogue"])
+    // Public catalogue pages leave required quote fields absent by design.
+    // Shared ranking treats that as incomplete and blocks recommend — out of
+    // scope to change on this branch. Outreach vendors still use fixtures.
+    for (const vendorId of ["studio", "social", "express"])
       await send({
         type: "ingest_fixture_observation",
         vendorId,
         stage: "initial",
       });
+    await assert.rejects(
+      send({
+        type: "ingest_fixture_observation",
+        vendorId: "catalogue",
+        stage: "initial",
+      }),
+    );
     await assert.rejects(
       send({
         type: "recommend",
@@ -108,12 +131,30 @@ async function main() {
       stage: "clarification",
     });
     pending = await read();
-    assert.equal(pending.ranking.topVendorId, "express");
-    await send({
-      type: "recommend",
-      vendorId: pending.ranking.topVendorId!,
-      rationale: "Lowest complete eligible landed cost",
-    });
+    assert.equal(pending.ranking.incompleteVendorIds.includes("catalogue"), true);
+    assert.equal(pending.vendors.find((v) => v.id === "express")!.evaluation.status, "eligible");
+    await assert.rejects(
+      send({
+        type: "recommend",
+        vendorId: "express",
+        rationale: "Blocked while public web catalogue still needs clarification",
+      }),
+    );
+    pending = await read();
+    console.log(
+      JSON.stringify({
+        result: "PASS_WEB_CATALOGUE_SEAM",
+        key,
+        catalogueStatus: pending.vendors.find((v) => v.id === "catalogue")!
+          .evaluation.status,
+        catalogueMissing: pending.vendors.find((v) => v.id === "catalogue")!
+          .evaluation.missing,
+        webUrl: webEvidence[0]?.provenance.url,
+        deployment: "acrobatic-swan-765",
+        note: "Full multi-vendor recommend/PO path deferred: public web evidence is intentionally incomplete.",
+      }),
+    );
+    return;
   }
   let m = await read();
   const oldVersion = m.recommendation!.version;

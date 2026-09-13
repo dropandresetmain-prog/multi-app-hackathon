@@ -1171,7 +1171,7 @@ function DevelopmentControls({
   pending: string | null;
 }) {
   const [clarifyVendor, setClarifyVendor] = useState(
-    mission.vendors[0]?.id ?? "",
+    mission.vendors.find((v) => v.channel !== "Web")?.id ?? "",
   );
   const [clarification, setClarification] = useState(
     "Please confirm the delivery date, landed cost, stock, and branding requirement.",
@@ -1234,10 +1234,11 @@ function DevelopmentControls({
         </div>
         <div className="control-group">
           <div>
-            <h3>Request fixture quotes</h3>
+            <h3>Request quotes</h3>
             <p>
-              Create deterministic sourcing intents. Evidence arrives separately
-              through the inbound observation contract.
+              Create deterministic sourcing intents. Web catalogue retrieval
+              ingests public evidence; outreach channels wait for separate
+              inbound observations.
             </p>
           </div>
           <div className="button-row">
@@ -1262,12 +1263,15 @@ function DevelopmentControls({
           <div>
             <h3>Ingest fixture observations</h3>
             <p>
-              Deliver Development evidence through the same ingest contract
-              future Gmail, Unipile, and web adapters will use.
+              Deliver Development evidence for outreach channels through the same
+              ingest contract. The Web catalogue vendor uses live public pages
+              instead of fixtures.
             </p>
           </div>
           <div className="button-row">
-            {mission.vendors.map((vendor) => (
+            {mission.vendors
+              .filter((vendor) => vendor.channel !== "Web")
+              .map((vendor) => (
               <button
                 className="button tertiary"
                 disabled={Boolean(pending)}
@@ -1297,7 +1301,9 @@ function DevelopmentControls({
             </p>
           </div>
           <div className="button-row">
-            {mission.vendors.map((vendor) => (
+            {mission.vendors
+              .filter((vendor) => vendor.channel !== "Web")
+              .map((vendor) => (
               <button
                 className="button tertiary"
                 disabled={Boolean(pending)}
@@ -1345,7 +1351,9 @@ function DevelopmentControls({
               value={clarifyVendor}
               onChange={(event) => setClarifyVendor(event.target.value)}
             >
-              {mission.vendors.map((vendor) => (
+              {mission.vendors
+                .filter((vendor) => vendor.channel !== "Web")
+                .map((vendor) => (
                 <option value={vendor.id} key={vendor.id}>
                   {vendor.name}
                 </option>
