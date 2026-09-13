@@ -7,16 +7,20 @@ import {
 import type {
   AgentCommand,
   Approval,
+  Channel,
   CommunicationState,
   Effect,
   Evaluation,
   Evidence,
   EvidenceInput,
+  EvidenceProvider,
+  EvidenceProvenance,
   Mission,
   Quote,
   QuoteField,
   SupplierRanking,
   UserCommand,
+  Vendor,
   Workflow,
 } from "./types";
 
@@ -41,12 +45,11 @@ const fields: QuoteField[] = [
   "branded",
   "currency",
 ];
-const communicationRank: Record<CommunicationState, number> = {
-  none: 0,
-  pending: 1,
-  attempted: 2,
-  unverified: 3,
-  verified: 4,
+const providerChannels: Record<Exclude<EvidenceProvider, "fixture">, Channel> = {
+  web: "Web",
+  gmail: "Gmail",
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
 };
 function move(m: Mission, next: Workflow) {
   m.state = transition(m.state, next, transitions);
@@ -80,20 +83,31 @@ export function communicationState(
   m: Mission,
   vendorId: string,
 ): CommunicationState {
-  const outbound = m.effects.filter(
-    (e) =>
-      e.targetId === vendorId &&
-      (e.kind === "rfq" ||
-        e.kind === "clarification" ||
-        e.kind === "confirmation" ||
-        e.kind === "rejection"),
-  );
-  let current: CommunicationState = "none";
-  for (const effect of outbound) {
-    if (communicationRank[effect.status] > communicationRank[current])
-      current = effect.status;
-  }
-  return current;
+  const latest = [...m.effects]
+    .reverse()
+    .find(
+      (e) =>
+        e.targetId === vendorId &&
+        (e.kind === "rfq" ||
+          e.kind === "clarification" ||
+          e.kind === "confirmation" ||
+          e.kind === "rejection"),
+    );
+  return latest?.status ?? "none";
+}
+function assertProvenanceMatchesVendor(
+  configured: Vendor,
+  provenance: EvidenceProvenance,
+) {
+  if (provenance.channel !== configured.channel)
+    throw new Error(
+      "Evidence provenance channel does not match the configured vendor channel",
+    );
+  if (provenance.provider === "fixture") return;
+  if (providerChannels[provenance.provider] !== configured.channel)
+    throw new Error(
+      "Evidence provider does not match the configured vendor channel",
+    );
 }
 export function evaluate(m: Mission, vendorId: string): Evaluation {
   const evidence = m.evidence.filter((e) => e.vendorId === vendorId);
@@ -220,7 +234,7 @@ export function refreshDerived(m: Mission) {
   m.ranking = rankSuppliers(m);
 }
 export function ingestEvidence(m: Mission, input: EvidenceInput) {
-  vendor(m, input.vendorId);
+  assertProvenanceMatchesVendor(vendor(m, input.vendorId), input.provenance);
   integer(input.revision, "source revision", 1);
   integer(input.observedAt, "observed at", 1, 9000000000000);
   integer(input.provenance.observedAt, "provenance observed at", 1, 9000000000000);

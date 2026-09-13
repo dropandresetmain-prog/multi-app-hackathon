@@ -491,3 +491,113 @@ test("fixture helpers may name scenarios but request_quote does not manufacture 
   assert.equal(m.evidence[0]?.provenance.provider, "fixture");
   assert.equal(m.evidence[0]?.id, "fixture:express:initial");
 });
+
+test("vendor communication follows the latest outbound effect, not the highest historical status", () => {
+  const m = sourcing();
+  applyCommand(m, { type: "request_quote", vendorId: "studio" }, now);
+  const rfq = m.effects.find((e) => e.kind === "rfq" && e.targetId === "studio")!;
+  rfq.status = "verified";
+  assert.equal(communicationState(m, "studio"), "verified");
+  applyCommand(
+    m,
+    {
+      type: "clarify_quote",
+      vendorId: "studio",
+      question: "Confirm delivery and fees",
+    },
+    now,
+  );
+  const clarification = m.effects.find(
+    (e) => e.kind === "clarification" && e.targetId === "studio",
+  )!;
+  assert.equal(communicationState(m, "studio"), "pending");
+  assert.equal(rfq.status, "verified");
+  clarification.status = "attempted";
+  assert.equal(communicationState(m, "studio"), "attempted");
+  clarification.status = "unverified";
+  assert.equal(communicationState(m, "studio"), "unverified");
+  clarification.status = "verified";
+  assert.equal(communicationState(m, "studio"), "verified");
+  assert.equal(rfq.status, "verified");
+});
+
+test("evidence provenance must match the configured vendor channel", () => {
+  const m = sourcing();
+  const valid = [
+    ["catalogue", "web", "Web"],
+    ["studio", "gmail", "Gmail"],
+    ["express", "whatsapp", "WhatsApp"],
+    ["social", "instagram", "Instagram"],
+  ] as const;
+  for (const [vendorId, provider, channel] of valid) {
+    ingestEvidence(
+      m,
+      observation(m, vendorId, `${provider}-ok`, { unitCents: 1800 }, {
+        provenance: {
+          provider,
+          channel,
+          observationId: `${provider}-ok`,
+          observedAt: now,
+        },
+      }),
+    );
+  }
+  assert.equal(m.evidence.length, 4);
+  ingestEvidence(
+    m,
+    observation(m, "studio", "fixture-ok", { unitCents: 1800 }, {
+      provenance: {
+        provider: "fixture",
+        channel: "Gmail",
+        observationId: "fixture-ok",
+        observedAt: now,
+      },
+    }),
+  );
+  assert.throws(
+    () =>
+      ingestEvidence(
+        m,
+        observation(m, "express", "gmail-on-whatsapp", { unitCents: 1800 }, {
+          provenance: {
+            provider: "gmail",
+            channel: "Gmail",
+            observationId: "gmail-on-whatsapp",
+            observedAt: now,
+          },
+        }),
+      ),
+    /channel/,
+  );
+  assert.throws(
+    () =>
+      ingestEvidence(
+        m,
+        observation(m, "studio", "fixture-wrong-channel", { unitCents: 1800 }, {
+          provenance: {
+            provider: "fixture",
+            channel: "WhatsApp",
+            observationId: "fixture-wrong-channel",
+            observedAt: now,
+          },
+        }),
+      ),
+    /channel/,
+  );
+  assert.throws(
+    () =>
+      ingestEvidence(
+        m,
+        observation(m, "studio", "provider-mismatch", { unitCents: 1800 }, {
+          provenance: {
+            provider: "whatsapp",
+            channel: "Gmail",
+            observationId: "provider-mismatch",
+            observedAt: now,
+          },
+        }),
+      ),
+    /provider|channel/,
+  );
+  assert.equal(m.evidence.length, 5);
+});

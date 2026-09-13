@@ -2,7 +2,10 @@
 
 ## Current checkpoint
 
-Shared-core generalization is **complete on `feature/generalize-procurement-core`**. Not merged to `main`.
+Targeted review fixes on `feature/generalize-procurement-core`. Not merged to `main`.
+
+- [x] Communication state is the latest outbound effect, not the highest lifecycle rank.
+- [x] Evidence provenance must match the configured vendor channel.
 
 - Base `origin/main` verified: `966f28d9836cf47b351df3a46a8790cf89dc99c3`.
 - Branch: `feature/generalize-procurement-core`.
