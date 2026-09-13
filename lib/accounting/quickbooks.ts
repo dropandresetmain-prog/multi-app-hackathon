@@ -55,6 +55,12 @@ export type VerifiedPurchaseOrderView = {
   privateNote: string;
 };
 
+export type CompanyCurrencyCapability = {
+  multiCurrencyEnabled: boolean;
+  homeCurrency: string;
+  supportedCurrencies: string[];
+};
+
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 
 /** DocNumber max length in QBO is 21. Stable hash keeps retries reconcilable. */
@@ -170,7 +176,8 @@ async function refreshAccessToken(config: QuickBooksConfig): Promise<string> {
     );
   }
   const json = (await response.json()) as { access_token?: string };
-  if (!json.access_token) throw new Error("QuickBooks token response missing access_token");
+  if (!json.access_token)
+    throw new Error("QuickBooks token response missing access_token");
   return json.access_token;
 }
 
@@ -203,20 +210,117 @@ function queryPath(realmId: string, query: string): string {
   return `/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=75`;
 }
 
+export function currencyCapabilityError(
+  intentCurrency: string,
+  capability: CompanyCurrencyCapability,
+): string {
+  const supported =
+    capability.supportedCurrencies.length > 0
+      ? capability.supportedCurrencies.join(", ")
+      : capability.homeCurrency;
+  return [
+    `QuickBooks Sandbox cannot represent purchase orders in ${intentCurrency}.`,
+    `Observed: MultiCurrencyEnabled=${capability.multiCurrencyEnabled}, HomeCurrency=${capability.homeCurrency}, available=${supported}.`,
+    "Required: In the Sandbox company UI open Settings → Account and settings → Advanced → Currency,",
+    `set Home currency to ${intentCurrency} (only while multicurrency is still off), OR enable Multicurrency and add ${intentCurrency} as a company currency,`,
+    `then ensure the vendor CurrencyRef is ${intentCurrency}.`,
+    "Do not convert amounts. Restart PO creation only after CurrencyRef on the Purchase Order will equal the intended mission currency.",
+  ].join(" ");
+}
+
+export function assertCurrencyRepresentable(
+  intentCurrency: string,
+  capability: CompanyCurrencyCapability,
+): void {
+  const normalized = intentCurrency.toUpperCase();
+  const home = capability.homeCurrency.toUpperCase();
+  if (!capability.multiCurrencyEnabled) {
+    if (home !== normalized) {
+      throw new Error(currencyCapabilityError(intentCurrency, capability));
+    }
+    return;
+  }
+  const available = new Set(
+    capability.supportedCurrencies.map((code) => code.toUpperCase()),
+  );
+  if (available.size === 0) available.add(home);
+  if (!available.has(normalized)) {
+    throw new Error(currencyCapabilityError(intentCurrency, capability));
+  }
+}
+
+export async function readCompanyCurrencyCapability(
+  config: QuickBooksConfig,
+  accessToken?: string,
+): Promise<CompanyCurrencyCapability> {
+  const token = accessToken ?? (await refreshAccessToken(config));
+  const prefs = await qboFetch<{
+    Preferences?: {
+      CurrencyPrefs?: {
+        MultiCurrencyEnabled?: boolean;
+        HomeCurrency?: { value?: string };
+      };
+    };
+  }>(config, token, `/v3/company/${config.realmId}/preferences?minorversion=75`);
+  const multiCurrencyEnabled = Boolean(
+    prefs.Preferences?.CurrencyPrefs?.MultiCurrencyEnabled,
+  );
+  const homeCurrency =
+    prefs.Preferences?.CurrencyPrefs?.HomeCurrency?.value?.toUpperCase() ?? "";
+  if (!homeCurrency) {
+    throw new Error("QuickBooks Preferences did not return HomeCurrency");
+  }
+
+  const supportedCurrencies = new Set<string>([homeCurrency]);
+  if (multiCurrencyEnabled) {
+    try {
+      const data = await qboFetch<{
+        QueryResponse?: {
+          CompanyCurrency?: Array<{ Code?: string; Active?: boolean }>;
+        };
+      }>(
+        config,
+        token,
+        queryPath(config.realmId, "select * from CompanyCurrency"),
+      );
+      for (const entry of data.QueryResponse?.CompanyCurrency ?? []) {
+        if (entry.Code && entry.Active !== false) {
+          supportedCurrencies.add(entry.Code.toUpperCase());
+        }
+      }
+    } catch {
+      // CompanyCurrency query can fail on some sandboxes; home currency remains authoritative.
+    }
+  }
+
+  return {
+    multiCurrencyEnabled,
+    homeCurrency,
+    supportedCurrencies: [...supportedCurrencies],
+  };
+}
+
+type VendorRecord = {
+  Id: string;
+  DisplayName: string;
+  SyncToken?: string;
+  CurrencyRef?: { value?: string; name?: string };
+};
+
 async function findVendorByName(
   config: QuickBooksConfig,
   accessToken: string,
   displayName: string,
-): Promise<{ Id: string; DisplayName: string } | null> {
+): Promise<VendorRecord | null> {
   const escaped = displayName.replace(/'/g, "\\'");
   const data = await qboFetch<{
-    QueryResponse?: { Vendor?: Array<{ Id: string; DisplayName: string }> };
+    QueryResponse?: { Vendor?: VendorRecord[] };
   }>(
     config,
     accessToken,
     queryPath(
       config.realmId,
-      `select Id, DisplayName from Vendor where DisplayName = '${escaped}'`,
+      `select * from Vendor where DisplayName = '${escaped}'`,
     ),
   );
   return data.QueryResponse?.Vendor?.[0] ?? null;
@@ -226,14 +330,20 @@ async function createVendor(
   config: QuickBooksConfig,
   accessToken: string,
   displayName: string,
-): Promise<{ Id: string; DisplayName: string }> {
-  const data = await qboFetch<{ Vendor: { Id: string; DisplayName: string } }>(
+  currency: string,
+  multiCurrencyEnabled: boolean,
+): Promise<VendorRecord> {
+  const body: Record<string, unknown> = { DisplayName: displayName };
+  if (multiCurrencyEnabled) {
+    body.CurrencyRef = { value: currency };
+  }
+  const data = await qboFetch<{ Vendor: VendorRecord }>(
     config,
     accessToken,
     `/v3/company/${config.realmId}/vendor?minorversion=75`,
     {
       method: "POST",
-      body: JSON.stringify({ DisplayName: displayName }),
+      body: JSON.stringify(body),
     },
   );
   return data.Vendor;
@@ -243,10 +353,51 @@ async function ensureVendor(
   config: QuickBooksConfig,
   accessToken: string,
   displayName: string,
-): Promise<{ Id: string; DisplayName: string }> {
+  currency: string,
+  capability: CompanyCurrencyCapability,
+): Promise<VendorRecord> {
   const existing = await findVendorByName(config, accessToken, displayName);
-  if (existing) return existing;
-  return await createVendor(config, accessToken, displayName);
+  if (!capability.multiCurrencyEnabled) {
+    // Single-currency books: home currency already asserted to match intent.
+    if (existing) return existing;
+    return await createVendor(config, accessToken, displayName, currency, false);
+  }
+
+  if (!existing) {
+    return await createVendor(config, accessToken, displayName, currency, true);
+  }
+
+  const vendorCurrency = (
+    existing.CurrencyRef?.value ?? capability.homeCurrency
+  ).toUpperCase();
+  if (vendorCurrency === currency.toUpperCase()) return existing;
+
+  // QBO does not allow changing a vendor's currency after creation/use.
+  // Create a currency-specific vendor identity for this mission currency.
+  const currencySpecificName = `${displayName} (${currency.toUpperCase()})`;
+  const renamed = await findVendorByName(
+    config,
+    accessToken,
+    currencySpecificName,
+  );
+  if (renamed) {
+    const renamedCurrency = (
+      renamed.CurrencyRef?.value ?? capability.homeCurrency
+    ).toUpperCase();
+    if (renamedCurrency !== currency.toUpperCase()) {
+      throw new Error(
+        `Vendor "${currencySpecificName}" currency ${renamedCurrency} is incompatible with intended ${currency}`,
+      );
+    }
+    return renamed;
+  }
+  return await createVendor(
+    config,
+    accessToken,
+    currencySpecificName,
+    currency,
+    true,
+  );
 }
 
 async function findItemByName(
@@ -284,7 +435,8 @@ async function findExpenseAccount(
     ),
   );
   const account = data.QueryResponse?.Account?.[0];
-  if (!account) throw new Error("No Expense account found in QuickBooks Sandbox");
+  if (!account)
+    throw new Error("No Expense account found in QuickBooks Sandbox");
   return account.Id;
 }
 
@@ -385,18 +537,20 @@ export function assertPurchaseOrderMatchesIntent(
       `QuickBooks total ${view.totalCents} does not match intended totalCents ${intent.totalCents}`,
     );
   }
-  if (view.currency && view.currency !== intent.currency) {
-    // Sandbox companies are often home-currency only. PrivateNote must still carry the
-    // intended mission currency; never invent a converted amount.
-    if (!view.privateNote.includes(`currency=${intent.currency}`)) {
-      throw new Error(
-        `QuickBooks currency ${view.currency} does not match intended ${intent.currency}`,
-      );
-    }
+  // PrivateNote metadata must never substitute for actual transaction currency.
+  if (!view.currency) {
+    throw new Error(
+      "QuickBooks Purchase Order is missing CurrencyRef; intended currency cannot be verified",
+    );
+  }
+  if (view.currency.toUpperCase() !== intent.currency.toUpperCase()) {
+    throw new Error(
+      `QuickBooks CurrencyRef ${view.currency} does not match intended ${intent.currency}`,
+    );
   }
   if (
     view.vendorName &&
-    view.vendorName.toLowerCase() !== intent.vendorName.toLowerCase()
+    !view.vendorName.toLowerCase().startsWith(intent.vendorName.toLowerCase())
   ) {
     throw new Error(
       `QuickBooks vendor ${view.vendorName} does not match ${intent.vendorName}`,
@@ -408,13 +562,21 @@ export function assertPurchaseOrderMatchesIntent(
 /**
  * Create-or-reconcile a Sandbox Purchase Order for a stable logical effect key.
  * Never blindly retries create after an ambiguous prior attempt: DocNumber lookup first.
+ * Never creates a PO in a different currency than the intended mission currency.
  */
 export async function createOrReconcilePurchaseOrder(
   config: QuickBooksConfig,
   intent: PurchaseOrderIntent,
   existingProviderId?: string | null,
-): Promise<{ providerId: string; created: boolean; purchaseOrder: QuickBooksPurchaseOrder }> {
+): Promise<{
+  providerId: string;
+  created: boolean;
+  purchaseOrder: QuickBooksPurchaseOrder;
+}> {
   const docNumber = docNumberForEffect(intent.effectKey);
+  const accessToken = await refreshAccessToken(config);
+  const capability = await readCompanyCurrencyCapability(config, accessToken);
+  assertCurrencyRepresentable(intent.currency, capability);
 
   if (existingProviderId) {
     const existing = await getPurchaseOrderById(config, existingProviderId);
@@ -432,8 +594,13 @@ export async function createOrReconcilePurchaseOrder(
     return { providerId: prior.Id, created: false, purchaseOrder: prior };
   }
 
-  const accessToken = await refreshAccessToken(config);
-  const vendor = await ensureVendor(config, accessToken, intent.vendorName);
+  const vendor = await ensureVendor(
+    config,
+    accessToken,
+    intent.vendorName,
+    intent.currency,
+    capability,
+  );
   const itemId = await ensureProcurementItem(config, accessToken);
   const unitPrice = intent.totalCents / 100 / intent.orderQuantity;
   const amount = intent.totalCents / 100;
@@ -442,6 +609,7 @@ export async function createOrReconcilePurchaseOrder(
     DocNumber: docNumber,
     PrivateNote: privateNoteForIntent(intent),
     VendorRef: { value: vendor.Id },
+    CurrencyRef: { value: intent.currency },
     Line: [
       {
         Amount: amount,
@@ -455,9 +623,6 @@ export async function createOrReconcilePurchaseOrder(
       },
     ],
   };
-  if (intent.currency) {
-    body.CurrencyRef = { value: intent.currency };
-  }
 
   try {
     const data = await qboFetch<{ PurchaseOrder: QuickBooksPurchaseOrder }>(
@@ -466,42 +631,15 @@ export async function createOrReconcilePurchaseOrder(
       `/v3/company/${config.realmId}/purchaseorder?minorversion=75`,
       { method: "POST", body: JSON.stringify(body) },
     );
+    assertPurchaseOrderMatchesIntent(data.PurchaseOrder, intent);
     return {
       providerId: data.PurchaseOrder.Id,
       created: true,
       purchaseOrder: data.PurchaseOrder,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    // Retry once without CurrencyRef when the company books are single-currency.
-    if (body.CurrencyRef && /currency|Currency/i.test(message)) {
-      delete body.CurrencyRef;
-      try {
-        const data = await qboFetch<{ PurchaseOrder: QuickBooksPurchaseOrder }>(
-          config,
-          accessToken,
-          `/v3/company/${config.realmId}/purchaseorder?minorversion=75`,
-          { method: "POST", body: JSON.stringify(body) },
-        );
-        return {
-          providerId: data.PurchaseOrder.Id,
-          created: true,
-          purchaseOrder: data.PurchaseOrder,
-        };
-      } catch (retryError) {
-        const recovered = await findPurchaseOrderByDocNumber(config, docNumber);
-        if (recovered) {
-          assertPurchaseOrderMatchesIntent(recovered, intent);
-          return {
-            providerId: recovered.Id,
-            created: false,
-            purchaseOrder: recovered,
-          };
-        }
-        throw retryError;
-      }
-    }
     // Ambiguous failure after the request may have succeeded: reconcile, do not create again.
+    // Never strip CurrencyRef and retry — that would record the wrong business currency.
     const recovered = await findPurchaseOrderByDocNumber(config, docNumber);
     if (recovered) {
       assertPurchaseOrderMatchesIntent(recovered, intent);
@@ -510,6 +648,11 @@ export async function createOrReconcilePurchaseOrder(
         created: false,
         purchaseOrder: recovered,
       };
+    }
+    if (error instanceof Error && /currency|Currency/i.test(error.message)) {
+      throw new Error(
+        `${error.message} ${currencyCapabilityError(intent.currency, capability)}`,
+      );
     }
     throw error;
   }

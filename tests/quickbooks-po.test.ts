@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertCurrencyRepresentable,
   assertPurchaseOrderMatchesIntent,
+  currencyCapabilityError,
   docNumberForEffect,
   parsePurchaseOrderIntentPayload,
   privateNoteForIntent,
@@ -52,13 +54,13 @@ test("parsePurchaseOrderIntentPayload requires orderQuantity economics", () => {
   );
 });
 
-test("read-back view and intent match on vendor, MOQ order quantity, and total", () => {
-  const po: QuickBooksPurchaseOrder = {
+test("read-back requires actual CurrencyRef SGD, not PrivateNote substitution", () => {
+  const matching: QuickBooksPurchaseOrder = {
     Id: "147",
     DocNumber: docNumberForEffect(intent.effectKey),
     PrivateNote: privateNoteForIntent(intent),
     TotalAmt: 555,
-    CurrencyRef: { value: "USD" },
+    CurrencyRef: { value: "SGD" },
     VendorRef: { value: "33", name: "Good Things Studio" },
     Line: [
       {
@@ -71,10 +73,20 @@ test("read-back view and intent match on vendor, MOQ order quantity, and total",
       },
     ],
   };
-  const view = viewFromPurchaseOrder(po);
+  const view = viewFromPurchaseOrder(matching);
   assert.equal(view.orderQuantity, 30);
   assert.equal(view.totalCents, 55500);
-  assert.doesNotThrow(() => assertPurchaseOrderMatchesIntent(po, intent));
+  assert.equal(view.currency, "SGD");
+  assert.doesNotThrow(() => assertPurchaseOrderMatchesIntent(matching, intent));
+
+  const usdBooked = {
+    ...matching,
+    CurrencyRef: { value: "USD" },
+  };
+  assert.throws(
+    () => assertPurchaseOrderMatchesIntent(usdBooked, intent),
+    /CurrencyRef USD does not match intended SGD/,
+  );
 });
 
 test("read-back fails when QuickBooks quantity is the required quantity instead of orderQuantity", () => {
@@ -83,6 +95,7 @@ test("read-back fails when QuickBooks quantity is the required quantity instead 
     DocNumber: docNumberForEffect(intent.effectKey),
     PrivateNote: privateNoteForIntent(intent),
     TotalAmt: 555,
+    CurrencyRef: { value: "SGD" },
     VendorRef: { value: "33", name: "Good Things Studio" },
     Line: [
       {
@@ -92,5 +105,35 @@ test("read-back fails when QuickBooks quantity is the required quantity instead 
       },
     ],
   };
-  assert.throws(() => assertPurchaseOrderMatchesIntent(po, intent), /orderQuantity/);
+  assert.throws(
+    () => assertPurchaseOrderMatchesIntent(po, intent),
+    /orderQuantity/,
+  );
+});
+
+test("company without SGD representation fails closed before create", () => {
+  assert.throws(
+    () =>
+      assertCurrencyRepresentable("SGD", {
+        multiCurrencyEnabled: false,
+        homeCurrency: "USD",
+        supportedCurrencies: ["USD"],
+      }),
+    /cannot represent purchase orders in SGD/,
+  );
+  assert.doesNotThrow(() =>
+    assertCurrencyRepresentable("SGD", {
+      multiCurrencyEnabled: true,
+      homeCurrency: "USD",
+      supportedCurrencies: ["USD", "SGD"],
+    }),
+  );
+  assert.match(
+    currencyCapabilityError("SGD", {
+      multiCurrencyEnabled: false,
+      homeCurrency: "USD",
+      supportedCurrencies: ["USD"],
+    }),
+    /Advanced → Currency/,
+  );
 });
