@@ -140,8 +140,12 @@ function FixtureControls({
   pending: string | null;
   send: Send;
 }) {
+  const outreachVendors = useMemo(
+    () => mission.vendors.filter((vendor) => vendor.channel !== "Web"),
+    [mission.vendors],
+  );
   const [clarifyVendor, setClarifyVendor] = useState(
-    mission.vendors[0]?.id ?? "",
+    outreachVendors[0]?.id ?? "",
   );
   const [clarification, setClarification] = useState(
     "Please confirm the delivery date, landed cost, stock, and branding requirement.",
@@ -216,7 +220,7 @@ function FixtureControls({
         text="Fixture observations through the same ingest contract real adapters use."
       >
         <div className="button-row">
-          {mission.vendors.map((vendor) => (
+          {outreachVendors.map((vendor) => (
             <button
               className="button quiet small"
               disabled={busy}
@@ -242,7 +246,7 @@ function FixtureControls({
         text="A later authoritative update. History is kept; stale claims are superseded."
       >
         <div className="button-row">
-          {mission.vendors.map((vendor) => (
+          {outreachVendors.map((vendor) => (
             <button
               className="button quiet small"
               disabled={busy}
@@ -281,7 +285,7 @@ function FixtureControls({
               value={clarifyVendor}
               onChange={(event) => setClarifyVendor(event.target.value)}
             >
-              {mission.vendors.map((vendor) => (
+              {outreachVendors.map((vendor) => (
                 <option value={vendor.id} key={vendor.id}>
                   {vendor.name}
                 </option>

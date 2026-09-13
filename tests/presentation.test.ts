@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createMission, fixtureEvidence } from "../lib/procurement/fixtures";
 import { applyCommand } from "../lib/procurement/domain";
-import type { Mission } from "../lib/procurement/types";
+import type { EvidenceInput, Mission } from "../lib/procurement/types";
+import { defaultCatalogueSource } from "../lib/web/catalogueSource";
 import {
   changedFacts,
   cleanError,
@@ -38,10 +39,53 @@ function sourcing(budgetCents = 75000) {
   );
   return m;
 }
+/** Web-shaped catalogue stand-in. Fixtures are refused for the Web vendor. */
+function catalogueEvidence(m: Mission, observedAt: number): EvidenceInput {
+  const source = defaultCatalogueSource();
+  const deadline = m.requirements.deadlineAt!;
+  const quantity = m.requirements.quantity!;
+  return {
+    vendorId: "catalogue",
+    source: `${source.supplierName} public catalogue`,
+    authority: "catalogue",
+    revision: 1,
+    observedAt,
+    text: `${source.productName}: domain-test complete quote stand-in for presentation.`,
+    claims: {
+      unitCents: 1400,
+      setupCents: 0,
+      deliveryCents: 2500,
+      taxCents: 0,
+      quantity,
+      moq: 50,
+      stock: 100,
+      deliveryAt: deadline + 86400000,
+      branded: true,
+      currency: "SGD",
+    },
+    provenance: {
+      provider: "web",
+      channel: "Web",
+      observationId: `catalogue:${observedAt}`,
+      parentId: `web:source:${source.productUrl}`,
+      url: source.productUrl,
+      observedAt,
+      retrievedAt: observedAt,
+      sourceLabel: `${source.supplierName} / ${source.productName}`,
+    },
+  };
+}
 function observe(m: Mission, vendorId: string, stage: "initial" | "clarification" | "update") {
+  const vendor = m.vendors.find((item) => item.id === vendorId);
   applyCommand(
     m,
-    { type: "ingest_external_evidence", evidence: fixtureEvidence(m, vendorId, stage, tick()) },
+    {
+      type: "ingest_external_evidence",
+      evidence:
+        vendor?.channel === "Web"
+          ? catalogueEvidence(m, tick())
+          : fixtureEvidence(m, vendorId, stage, tick()),
+    },
     clock,
   );
 }
