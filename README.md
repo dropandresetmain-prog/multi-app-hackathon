@@ -4,7 +4,7 @@
 
 Every small company has a mysterious employee called “somebody.” Somebody is an autonomous AI coworker for the messy operational jobs that fall between roles: gather context, chase people, reconcile changing information, ask for authority when it matters, take the approved action, and verify that the job actually got done.
 
-**Demo video:** Uploading now — the link will be added here shortly.
+**Demo video:** https://youtu.be/hMjTcs8iwvc
 
 ---
 
