@@ -1,9 +1,11 @@
 import { google } from "googleapis";
 import type { GoogleWorkspaceConfig } from "./config";
 
+// calendar + drive.file include create for bounded demo resource setup;
+// runtime reads still use the same grant.
 const SCOPES = [
-  "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/spreadsheets",
 ] as const;

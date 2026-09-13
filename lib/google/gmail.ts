@@ -80,6 +80,32 @@ function effectSubject(kind: "rfq" | "clarification", effectKey: string): string
   return `[Somebody ${tag} ${effectKey}] Corporate gift quote request`;
 }
 
+function formatRequirementsForEmail(payload: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return [`Details: ${payload}`];
+    const req = parsed as Record<string, unknown>;
+    const lines = ["Request details:"];
+    if (typeof req.quantity === "number")
+      lines.push(`- Quantity: ${req.quantity}`);
+    if (typeof req.budgetCents === "number")
+      lines.push(`- Total budget: SGD ${(req.budgetCents / 100).toFixed(2)}`);
+    if (typeof req.deadlineAt === "number")
+      lines.push(
+        `- Needed by: ${new Date(req.deadlineAt).toLocaleString("en-SG", {
+          timeZone: "Asia/Singapore",
+        })}`,
+      );
+    if (typeof req.branded === "boolean")
+      lines.push(`- Branding required: ${req.branded ? "yes" : "no"}`);
+    if (lines.length === 1) lines.push(`- ${payload}`);
+    return lines;
+  } catch {
+    return [`Details: ${payload}`];
+  }
+}
+
 function buildMime(args: {
   to: string;
   from?: string;
@@ -166,22 +192,35 @@ export async function sendGmailEffect(args: {
       ? [
           "Hello,",
           "",
-          "We need a branded corporate gift quote for an upcoming SME event.",
-          `Mission requirements (application JSON): ${args.payload}`,
+          "We need a quote for branded corporate gifts for an upcoming SME event.",
           "",
-          "Please reply with unit price, setup/customization, delivery fee, tax, MOQ, stock, branding method, and confirmed delivery timing.",
+          ...formatRequirementsForEmail(args.payload),
           "",
-          `Effect key: ${args.effectKey}`,
-          "— Somebody procurement worker",
+          "Please reply with:",
+          "- unit price (SGD)",
+          "- setup / customization fee",
+          "- delivery fee",
+          "- tax / GST",
+          "- MOQ and confirmed stock",
+          "- branding method",
+          "- confirmed delivery date/time",
+          "",
+          "Thanks,",
+          "Somebody procurement worker",
+          "",
+          `(ref: ${args.effectKey})`,
         ].join("\n")
       : [
           "Hello,",
           "",
           "Following up on the previous quote thread.",
-          args.payload,
           "",
-          `Effect key: ${args.effectKey}`,
-          "— Somebody procurement worker",
+          args.payload.trim(),
+          "",
+          "Thanks,",
+          "Somebody procurement worker",
+          "",
+          `(ref: ${args.effectKey})`,
         ].join("\n");
 
   const gmail = gmailClient(args.config);
@@ -304,17 +343,17 @@ export async function listGmailVendorReplies(args: {
   const after = args.afterMs
     ? ` after:${Math.floor(args.afterMs / 1000)}`
     : "";
-  // Threads involving the controlled vendor mailbox. Application resolves the address.
+  // Controlled vendor replies may land in Spam on a fresh counterparty mailbox.
+  // in:anywhere includes spam/trash; we still require from: the configured vendor.
   const list = await gmail.users.messages.list({
     userId: "me",
-    q: `{from:${to} to:${to}}${after} -in:draft`,
+    q: `from:${to}${after} in:anywhere -in:draft`,
     maxResults: 20,
   });
   const observations: GmailMessageObservation[] = [];
   for (const item of list.data.messages ?? []) {
     if (!item.id) continue;
     const message = await readGmailMessage(args.config, item.id);
-    // Keep supplier replies; skip pure outbound copies that we already recorded as effects.
     const fromVendor = message.from.toLowerCase().includes(to);
     if (!fromVendor) continue;
     observations.push(message);

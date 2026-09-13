@@ -15,7 +15,8 @@
     "dev:fixture": "tsx scripts/smoke-development.ts --showcase",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
-    "prove:google": "tsx --env-file=.env.local scripts/prove-google-workspace.ts"
+    "prove:google": "tsx --env-file=.env.local scripts/prove-google-workspace.ts",
+    "google:oauth": "tsx --env-file=.env.local scripts/google-oauth-bootstrap.ts"
   },
   "dependencies": {
     "@openai/agents": "^0.18.0",
